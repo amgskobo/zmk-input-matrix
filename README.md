@@ -16,7 +16,13 @@ Add this module to your `west.yml` or copy it to your ZMK config.
 
 ## Usage
 
-### 1. Configure Overlay
+### 1. include zip_matrix.dtsi
+
+```dts
+#include <zip_matrix.dtsi>
+```
+
+### 2. Configure Overlay
 
 In your `*.overlay` (or keymap), define the processor and assign it to your input listener (`trackpad_listener` or similar).
 
