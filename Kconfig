@@ -1,0 +1,5 @@
+menu "ZMK Input Matrix Module"
+
+rsource "drivers/input/Kconfig"
+
+endmenu
