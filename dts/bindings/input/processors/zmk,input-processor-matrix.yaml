@@ -1,0 +1,50 @@
+description: ZMK Input Processor - Grid & Flick Behavior Trigger
+
+compatible: "zmk,input-processor-matrix"
+
+include: zero_param.yaml
+
+properties:
+  rows:
+    type: int
+    required: true
+    description: Number of rows in the grid.
+  cols:
+    type: int
+    required: true
+    description: Number of columns in the grid.
+  x-min:
+    type: int
+    default: 0
+    description: Minimum X coordinate.
+  x-max:
+    type: int
+    default: 1024
+    description: Maximum X coordinate.
+  y-min:
+    type: int
+    default: 0
+    description: Minimum Y coordinate.
+  y-max:
+    type: int
+    default: 1024
+    description: Maximum Y coordinate.
+  flick-threshold:
+    type: int
+    default: 50
+    description: Minimum pixels to register a flick.
+  timeout-ms:
+    type: int
+    default: 80
+    description: Watchdog timeout (ms) for gesture completion.
+  suppress-input:
+    type: boolean
+    description: Consume input events.
+
+child-binding:
+  description: Grid Cell Configuration
+  properties:
+    bindings:
+      type: phandle-array
+      required: true
+      description: Array of 5 behaviors (Center, N, S, W, E).

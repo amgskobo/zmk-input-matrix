@@ -1,115 +1,114 @@
-# ZMK Input Processor - Grid Matrix
+# ZMK Input Matrix (zip_matrix)
 
-A ZMK input processor module that converts trackpad absolute coordinates into a **3×3 grid layer controller**.
+This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y) into a configurable 4-way flick grid trigger.
 
 ## Features
 
-- **3×3 Grid Mapping**: Divides the 0-1024 coordinate space into 9 cells
-- **Layer Activation**: Each cell maps to a ZMK layer (6-14)
-- **Touch Detection**: Detects touch via coordinate updates (no EV_KEY needed)
-- **Auto-Deactivation**: 80ms watchdog timer simulates finger lift
-- **Standard Input Processor**: Follows ZMK input processor API
-
-## Grid Layout
-
-```
-Layer 6  │ Layer 7  │ Layer 8     (0-341 Y)
-─────────┼──────────┼─────────    
-Layer 9  │ Layer 10 │ Layer 11    (341-682 Y)
-─────────┼──────────┼─────────
-Layer 12 │ Layer 13 │ Layer 14    (682-1024 Y)
-(0-341 X) (341-682 X) (682-1024 X)
-```
+- **Dynamic Grid**: Configure any size grid (e.g., 1x1, 2x2, 3x3, 4x3).
+- **Robust Triggering**: Uses a precision silence watchdog to detect gesture completion, ensuring compatibility with all trackpad drivers.
+- **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
+- **Lightweight Math**: High-performance Q16 fixed-point math and max-axis comparison for minimal MCU overhead.
+- **5 Gestures per Cell**: Center (Tap), North, South, West, East.
 
 ## Installation
 
-1. **Add to zmk-config**
-   ```bash
-   cd ~/zmk-config
-   git clone https://github.com/amgskobo/zmk-input-matrix.git zmk-input-matrix
-   ```
+Add this module to your `west.yml` or copy it to your ZMK config.
 
-2. **Update west.yml**
-   ```yaml
-   projects:
-     - name: zmk-input-matrix
-       path: zmk-input-matrix
-       url-base: file://
-       revision: main
-   ```
+## Usage
 
-3. **Run `west update`**
+### 1. Configure Overlay
 
-4. **Enable in config** (`config/your_board.conf`)
-   ```kconfig
-   CONFIG_ZMK_INPUT_PROCESSOR_GRID_MATRIX=y
-   ```
+In your `*.overlay` (or keymap), define the processor and assign it to your input listener (`trackpad_listener` or similar).
 
-5. **Add to devicetree** (shield/board overlay)
-   ```dts
-   &zip_input_processor_grid_matrix {
-       status = "okay";
-   };
-   ```
+**Note**: You do not need to enable a Kconfig option manually. The module is automatically enabled when you use the `zmk,input-processor-matrix` compatible string in your overlay.
 
-6. **Define layers 6-14** in your keymap
+**Example: 4x3 Grid (Standard T9 Layout)**
 
-## Configuration
+```dts
+/* Define the processor */
+&zip_matrix {
+    rows = <4>; cols = <3>;
+    timeout-ms = <80>;
+    flick-threshold = <50>;
 
-### Build Options
-```kconfig
-CONFIG_ZMK_INPUT_PROCESSOR_GRID_MATRIX=y  # Enable module
+    /* 
+     * Standard 12-Key T9 Layout (4 Rows x 3 Columns)
+     * [1] [2] [3]
+     * [4] [5] [6]
+     * [7] [8] [9]
+     * [*] [0] [#]
+     */
+
+    /* Row 0: 1, 2(ABC), 3(DEF) */
+    cell_00 { bindings = <&kp N1 &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    cell_01 { bindings = <&kp A  &kp C  &kp N2   &kp B    &kp A>; };    /* Tap=A, Left=B, Up=C */
+    cell_02 { bindings = <&kp D  &kp F  &kp N3   &kp E    &kp D>; };    /* Tap=D, Left=E, Up=F */
+
+    /* Row 1: 4(GHI), 5(JKL), 6(MNO) */
+    cell_03 { bindings = <&kp G  &kp I  &kp N4   &kp H    &kp G>; };
+    cell_04 { bindings = <&kp J  &kp L  &kp N5   &kp K    &kp J>; };
+    cell_05 { bindings = <&kp M  &kp O  &kp N6   &kp N    &kp M>; };
+
+    /* Row 2: 7(PQRS), 8(TUV), 9(WXYZ) */
+    cell_06 { bindings = <&kp P  &kp R  &kp S    &kp Q    &kp N7>; };
+    cell_07 { bindings = <&kp T  &kp V  &kp N8   &kp U    &kp T>; };
+    cell_08 { bindings = <&kp W  &kp Y  &kp Z    &kp X    &kp N9>; };
+
+    /* Row 3: *, 0, # */
+    cell_09 { bindings = <&kp STAR  &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    cell_10 { bindings = <&kp N0    &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    cell_11 { bindings = <&kp HASH  &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+};
+
+/* Assign to Listener */
+&trackball_listener {
+    input-processors = <&zip_matrix>;
+};
 ```
 
-### Hardcoded Parameters
-Edit `drivers/input/input_processor_grid_matrix.c`:
-- `TRACKPAD_MIN/MAX`: Coordinate range (0-1024)
-- `GRID_COLS/ROWS`: Grid dimensions (3×3)
-- `GRID_BASE_LAYER`: Starting layer (6)
-- `WATCHDOG_TIMEOUT_MS`: Touch-up timeout (80ms)
+## Configuration Reference
 
-## How It Works
+### Processor Properties
 
-1. Trackpad sends ABS_X/ABS_Y events
-2. Module calculates grid cell (0-8)
-3. Determines target layer (6-14)
-4. Activates layer
-5. Resets 80ms watchdog
-6. After 80ms with no updates → layer deactivates
+| Property | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `rows` | `int` | **Required** | Number of rows. |
+| `cols` | `int` | **Required** | Number of columns. |
+| `timeout-ms` | `int` | `80` | Time (ms) to detect gesture end. |
+| `flick-threshold` | `int` | `50` | Min pixels for a flick vs tap. |
+| `suppress-input` | `bool` | `false` | If `true`, stops event propagation (No mouse cursor movement). |
+| `x-min`/`x-max` | `int` | `0`/`1024` | Input range. |
+| `y-min`/`y-max` | `int` | `0`/`1024` | Input range. |
 
-## File Structure
+### Child Nodes & Grid Mapping
 
-```
-zmk-input-matrix/
-├── drivers/input/
-│   ├── input_processor_grid_matrix.c
-│   ├── CMakeLists.txt
-│   └── Kconfig
-├── dts/
-│   ├── behaviors/
-│   │   └── input_processor_grid_matrix.dtsi
-│   └── bindings/
-│       └── input/processors/zmk,input-processor-grid-matrix.yaml
-├── config/
-│   ├── example.conf
-│   ├── example.keymap
-│   ├── example.overlay
-│   └── west.yml
-├── zephyr/
-│   └── module.yml
-├── CMakeLists.txt
-├── Kconfig
-└── README.md
-```
+The driver maps child nodes to grid cells in **Row-Major Order** (Left-to-Right, Top-to-Bottom).
 
-## Documentation
+#### Mapping Logic
 
-- **[INTEGRATION.md](INTEGRATION.md)** - Integration & troubleshooting
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Quick reference guide
-- **[config/example.conf](config/example.conf)** - Example configuration
-- **[config/example.overlay](config/example.overlay)** - Example devicetree
-- **[config/example.keymap](config/example.keymap)** - Example keymap
+1. **Sorting**: The driver processes child nodes in **Alphabetical Order** of their node names.
+2. **Indexing**: Nodes are assigned to grid cells starting from index 0.
+    - `Index = (Row * Total_Cols) + Col`
 
-## License
+**Important**: Because of alphabetical sorting, use leading zeros if you have 10 or more cells (e.g., `cell_01`...`cell_10`) to keep the correct order.
 
-MIT License
+#### Example: 4x3 Grid (12 Cells)
+
+`rows = <4>; cols = <3>;`
+
+| | Column 0 (Left) | Column 1 (Center) | Column 2 (Right) |
+| :--- | :--- | :--- | :--- |
+| **Row 0 (Top)** | `cell_00` (Idx 0) | `cell_01` (Idx 1) | `cell_02` (Idx 2) |
+| **Row 1 (Mid)** | `cell_03` (Idx 3) | `cell_04` (Idx 4) | `cell_05` (Idx 5) |
+| **Row 2 (Bot)** | `cell_06` (Idx 6) | `cell_07` (Idx 7) | `cell_08` (Idx 8) |
+| **Row 3 (Low)** | `cell_09` (Idx 9) | `cell_10` (Idx 10) | `cell_11` (Idx 11) |
+
+#### Binding Format
+
+Each child node must have a `bindings` array with exactly 5 entries in this specific order:
+
+1. **Center** (Tap / No Flick)
+2. **North** (Flick Up)
+3. **South** (Flick Down)
+4. **West** (Flick Left)
+5. **East** (Flick Right)
