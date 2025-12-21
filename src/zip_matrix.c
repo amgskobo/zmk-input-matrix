@@ -11,7 +11,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <drivers/input_processor.h>
-#include <zmk/behavior.h>
+#include <zmk/behavior_queue.h>
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
@@ -205,7 +205,7 @@ static int input_processor_grid_init(const struct device *dev) {
     return 0;
 }
 
-static DEVICE_API(zmk_input_processor_driver_api) grid_processor_driver_api = {
+static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
     .handle_event = input_processor_grid_handle_event,
 };
 
