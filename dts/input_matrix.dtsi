@@ -1,0 +1,23 @@
+/*
+ * Copyright (c) 2025 The ZMK Contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+/ {
+    zip_matrix: input_processor_matrix {
+        compatible = "zmk,input-processor-matrix";
+        #input-processor-cells = <0>;
+
+        rows = <1>;
+        cols = <1>;
+        timeout-ms = <80>;
+        flick-threshold = <50>;
+        // suppress-input = <true>;
+        x-min = <0>;
+        x-max = <1024>;
+        y-min = <0>;
+        y-max = <1024>;
+    
+        cell_00 { bindings = <&none &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    };
+};

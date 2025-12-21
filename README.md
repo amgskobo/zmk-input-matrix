@@ -16,10 +16,10 @@ Add this module to your `west.yml` or copy it to your ZMK config.
 
 ## Usage
 
-### 1. include zip_matrix.dtsi
+### 1. include input_matrix.dtsi
 
 ```dts
-#include <zip_matrix.dtsi>
+#include <input_matrix.dtsi>
 ```
 
 ### 2. Configure Overlay
