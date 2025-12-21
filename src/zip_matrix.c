@@ -15,6 +15,18 @@
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
+/* * MANUAL MACRO DEFINITION (SHIM)
+ * This replaces the missing ZMK macro. It extracts behavior + params from the Devicetree.
+ * We use DEVICE_DT_NAME to be compatible with recent ZMK versions.
+ */
+#ifndef ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX
+#define ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(n, p, i) \
+    { \
+        .behavior_dev = DEVICE_DT_NAME(DT_PHANDLE_BY_IDX(n, p, i)), \
+        .param1 = COND_CODE_0(DT_PHA_HAS_CELL_AT_IDX(n, p, i, param1), (0), (DT_PHA_BY_IDX(n, p, i, param1))), \
+        .param2 = COND_CODE_0(DT_PHA_HAS_CELL_AT_IDX(n, p, i, param2), (0), (DT_PHA_BY_IDX(n, p, i, param2))), \
+    }
+#endif
 /* 
  * Each cell has exactly 5 bindings:
  * 0: Center (Tap)
