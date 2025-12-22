@@ -64,6 +64,8 @@ struct grid_processor_data {
     uint16_t start_y;
     uint32_t cell_w_inv; /* Fixed-point reciprocal (Q16) */
     uint32_t cell_h_inv; /* Fixed-point reciprocal (Q16) */
+    bool x_received;
+    bool y_received;
     bool is_touching;
 };
 
@@ -106,6 +108,8 @@ static void trigger_gesture(const struct device *dev) {
         return;
     }
     data->is_touching = false;
+    data->x_received = false;
+    data->y_received = false;
 
     uint8_t cell_idx = get_grid_cell(config, data, data->start_x, data->start_y);
     if (cell_idx < config->cell_count) {
@@ -157,14 +161,16 @@ static int input_processor_grid_handle_event(const struct device *dev,
 
     if (event->code == INPUT_ABS_X) {
         data->last_x = event->value;
+        data->x_received = true;
     } else if (event->code == INPUT_ABS_Y) {
         data->last_y = event->value;
+        data->y_received = true;
     } else {
         k_mutex_unlock(&data->lock);
         return ZMK_INPUT_PROC_CONTINUE;
     }
 
-    if (!data->is_touching) {
+    if (!data->is_touching && data->x_received && data->y_received) {
         data->is_touching = true;
         data->start_x = data->last_x;
         data->start_y = data->last_y;
