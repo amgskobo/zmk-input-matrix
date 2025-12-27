@@ -6,6 +6,7 @@ This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y
 
 - **Dynamic Grid**: Configure any size grid (e.g., 1x1, 2x2, 3x3, 4x3).
 - **Robust Triggering**: Uses a precision silence watchdog to detect gesture completion, ensuring compatibility with all trackpad drivers.
+- **Key Event Suppression**: Automatically suppresses all KEY events (e.g., `BTN_0`, `BTN_TOUCH`) to prevent unwanted button triggers while gesturing.
 - **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
 - **Lightweight Math**: High-performance Q16 fixed-point math and max-axis comparison for minimal MCU overhead.
 - **5 Gestures per Cell**: Center (Tap), North, South, West, East.

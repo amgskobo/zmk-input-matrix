@@ -153,6 +153,12 @@ static int input_processor_grid_handle_event(const struct device *dev,
                                               struct zmk_input_processor_state *state) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
 
+    /* Suppress all KEY events (e.g., BTN_0, BTN_TOUCH) without affecting gesture */
+    if (event->type == INPUT_EV_KEY) {
+        LOG_DBG("KEY event suppressed (code=%u)", event->code);
+        return ZMK_INPUT_PROC_STOP;
+    }
+
     if (event->type != INPUT_EV_ABS) {
         return ZMK_INPUT_PROC_CONTINUE;
     }
