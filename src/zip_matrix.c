@@ -153,15 +153,12 @@ static int input_processor_grid_handle_event(const struct device *dev,
                                               struct zmk_input_processor_state *state) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
 
-    LOG_INF("zip_matrix: event type=%d, code=%d, value=%d", event->type, event->code, event->value);
-
-    /* Suppress all KEY events (e.g., BTN_0, BTN_TOUCH) without affecting gesture */
+    /* Suppress all KEY events (e.g., BTN_0, BTN_TOUCH) without affecting gesture.
+     * Setting sync=false prevents HID report from being sent even if processed. */
     if (event->type == INPUT_EV_KEY) {
-        LOG_INF("KEY event suppressed (code=%u, value=%d)", event->code, event->value);
-        /* Invalidate the event completely so ZMK won't process it as mouse click */
-        event->type = INPUT_EV_REL;
-        event->code = 0;
+        LOG_DBG("KEY event suppressed (code=%u)", event->code);
         event->value = 0;
+        event->sync = false;
         return ZMK_INPUT_PROC_STOP;
     }
 
