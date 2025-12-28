@@ -157,7 +157,7 @@ static int input_processor_grid_handle_event(const struct device *dev,
     if (event->type == INPUT_EV_KEY) {
         if (config->suppress_key) {
             LOG_DBG("KEY event suppressed (code=%u)", event->code);
-            event->value = 0;
+            event->code = 0xFFF;
             event->sync = false;
             return ZMK_INPUT_PROC_STOP;
         }
