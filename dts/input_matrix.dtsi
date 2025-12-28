@@ -16,6 +16,7 @@
         x-max = <1024>;
         y-min = <0>;
         y-max = <1024>;
-        // suppress-input;
+        // suppress-pointer;  /* Consume ABS events (disable cursor movement) */
+        // suppress-key;      /* Consume KEY events (disable BTN_TOUCH clicks) */
     };
 };

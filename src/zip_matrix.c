@@ -48,7 +48,8 @@ struct grid_processor_config {
     uint16_t y_max;
     uint16_t flick_threshold;
     uint16_t timeout_ms;
-    bool suppress_input;
+    bool suppress_pointer;
+    bool suppress_key;
     const struct grid_cell_config *cells;
     size_t cell_count;
 };
@@ -153,13 +154,17 @@ static int input_processor_grid_handle_event(const struct device *dev,
                                               struct zmk_input_processor_state *state) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
 
-    /* Suppress all KEY events (e.g., BTN_0, BTN_TOUCH) without affecting gesture.
-     * Setting sync=false prevents HID report from being sent even if processed. */
+    const struct grid_processor_config *config = data->config;
+
+    /* Conditionally suppress KEY events (e.g., BTN_0, BTN_TOUCH) */
     if (event->type == INPUT_EV_KEY) {
-        LOG_DBG("KEY event suppressed (code=%u)", event->code);
-        event->value = 0;
-        event->sync = false;
-        return ZMK_INPUT_PROC_STOP;
+        if (config->suppress_key) {
+            LOG_DBG("KEY event suppressed (code=%u)", event->code);
+            event->value = 0;
+            event->sync = false;
+            return ZMK_INPUT_PROC_STOP;
+        }
+        return ZMK_INPUT_PROC_CONTINUE;
     }
 
     if (event->type != INPUT_EV_ABS) {
@@ -186,7 +191,7 @@ static int input_processor_grid_handle_event(const struct device *dev,
     }
 
     k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
-    bool suppress = data->config->suppress_input;
+    bool suppress = config->suppress_pointer;
     
     k_mutex_unlock(&data->lock);
     return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
@@ -263,7 +268,8 @@ static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
         .y_max = DT_INST_PROP(n, y_max),                                                      \
         .flick_threshold = DT_INST_PROP(n, flick_threshold),                                  \
         .timeout_ms = DT_INST_PROP(n, timeout_ms),                                            \
-        .suppress_input = DT_INST_PROP(n, suppress_input),                                    \
+        .suppress_pointer = DT_INST_PROP(n, suppress_pointer),                                \
+        .suppress_key = DT_INST_PROP(n, suppress_key),                                         \
         .cells = processor_grid_cells_##n,                                                    \
         .cell_count = ARRAY_SIZE(processor_grid_cells_##n),                                   \
     };                                                                                        \

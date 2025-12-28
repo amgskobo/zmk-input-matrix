@@ -6,7 +6,7 @@ This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y
 
 - **Dynamic Grid**: Configure any size grid (e.g., 1x1, 2x2, 3x3, 4x3).
 - **Robust Triggering**: Uses a precision silence watchdog to detect gesture completion, ensuring compatibility with all trackpad drivers.
-- **Key Event Suppression**: Automatically suppresses all KEY events (e.g., `BTN_0`, `BTN_TOUCH`) to prevent unwanted button triggers while gesturing.
+- **Flexible Event Filtering**: Independently suppress ABS (pointer) and KEY (button) events with `suppress-pointer` and `suppress-key` properties.
 - **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
 - **Lightweight Math**: High-performance Q16 fixed-point math and max-axis comparison for minimal MCU overhead.
 - **5 Gestures per Cell**: Center (Tap), North, South, West, East.
@@ -83,7 +83,8 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 | `cols` | `int` | **Required** | Number of columns. |
 | `timeout-ms` | `int` | `80` | Time (ms) to detect gesture end. |
 | `flick-threshold` | `int` | `50` | Min pixels for a flick vs tap. |
-| `suppress-input` | `bool` | `false` | If `true`, stops event propagation (No mouse cursor movement). |
+| `suppress-pointer` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |
+| `suppress-key` | `bool` | `false` | If `true`, stops KEY event propagation (disables BTN_TOUCH clicks). |
 | `x-min`/`x-max` | `int` | `0`/`1024` | Input range. |
 | `y-min`/`y-max` | `int` | `0`/`1024` | Input range. |
 

@@ -37,9 +37,12 @@ properties:
     type: int
     default: 80
     description: Watchdog timeout (ms) for gesture completion.
-  suppress-input:
+  suppress-pointer:
     type: boolean
-    description: Consume input events.
+    description: Consume ABS pointer events (X/Y coordinates).
+  suppress-key:
+    type: boolean
+    description: Consume KEY events (BTN_TOUCH, BTN_0, etc.).
 
 child-binding:
   description: Grid Cell Configuration
