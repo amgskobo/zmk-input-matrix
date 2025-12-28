@@ -105,12 +105,15 @@ static void trigger_gesture(const struct device *dev) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
     const struct grid_processor_config *config = data->config;
 
+    k_mutex_lock(&data->lock, K_FOREVER);
     if (!data->is_touching) {
+        k_mutex_unlock(&data->lock);
         return;
     }
     data->is_touching = false;
     data->x_received = false;
     data->y_received = false;
+    k_mutex_unlock(&data->lock);
 
     uint8_t cell_idx = get_grid_cell(config, data, data->start_x, data->start_y);
     if (cell_idx < config->cell_count) {
@@ -138,13 +141,7 @@ static void watchdog_callback(struct k_work *work) {
     struct grid_processor_data *data = CONTAINER_OF(dwork, struct grid_processor_data, watchdog);
 
     /* Use a reasonable timeout to ensure we don't drop the gesture under high CPU load */
-    if (k_mutex_lock(&data->lock, K_MSEC(50)) == 0) {
-        trigger_gesture(data->dev);
-        k_mutex_unlock(&data->lock);
-    } else {
-        LOG_WRN("Watchdog lock timeout; rescheduling");
-        k_work_reschedule(&data->watchdog, K_MSEC(10));
-    }
+    trigger_gesture(data->dev);
 }
 
 static int input_processor_grid_handle_event(const struct device *dev,
@@ -179,21 +176,17 @@ static int input_processor_grid_handle_event(const struct device *dev,
     } else if (event->code == INPUT_ABS_Y) {
         data->last_y = event->value;
         data->y_received = true;
-    } else {
-        k_mutex_unlock(&data->lock);
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-
+    } 
+    
     if (!data->is_touching && data->x_received && data->y_received) {
         data->is_touching = true;
         data->start_x = data->last_x;
         data->start_y = data->last_y;
     }
+    k_mutex_unlock(&data->lock);
 
     k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
     bool suppress = config->suppress_pointer;
-    
-    k_mutex_unlock(&data->lock);
     return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
 }
 
