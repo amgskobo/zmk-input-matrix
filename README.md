@@ -120,3 +120,28 @@ Each child node must have a `bindings` array with exactly 5 entries in this spec
 3. **South** (Flick Down)
 4. **West** (Flick Left)
 5. **East** (Flick Right)
+
+## Event Transparency and Coordinate Systems
+
+### Absolute (ABS) vs Relative (REL) Coordinates
+
+`zip_matrix` is designed to work with **Absolute Coordinates (ABS)**.
+
+- **Hardware Level**: Most touchpads and touch sensors report absolute positions (e.g., X: 0-1024, Y: 0-1024).
+- **zip_matrix**: Processes these ABS events to determine which grid cell is being touched and detects "flicks" (large delta in ABS coordinates).
+- **Standard Mouse**: ZMK's standard mouse reporting typically converts ABS events into **Relative (REL)** deltas (movement) using a converter or another input processor.
+
+### Event Flow & Transparency
+
+Input processors in ZMK form a chain. `zip_matrix` can either "consume" events or let them "pass through" (transparency) to the next processor in the chain.
+
+| Property | Behavior when `true` (Suppressed) | Behavior when `false` (Transparent) |
+| :--- | :--- | :--- |
+| `suppress-pointer` | Consumes ABS events. Cursor will **not** move. | Passes ABS events through. Cursor **will** move. |
+| `suppress-key` | Consumes KEY events (clicks). BTN_TOUCH etc. will **not** trigger clicks. | Passes KEY events through. BTN_TOUCH etc. **will** trigger clicks. |
+
+> [!TIP]
+> To use a trackpad **only** as a macro grid (like a T9 keypad), set both `suppress-pointer` and `suppress-key` to `true`.
+> To use it as a mouse **with** gesture capabilities (e.g., flicking at edges), set them to `false`, but ensure `zip_matrix` is positioned **before** any ABS-to-REL conversion in your `input-processors` list.
+
+```
