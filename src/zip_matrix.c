@@ -15,6 +15,8 @@
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
+#define GESTURE_COOLDOWN_MS 450
+
 /* * MANUAL MACRO DEFINITION (SHIM)
  * This replaces the missing ZMK macro. It extracts behavior + params from the Devicetree.
  * We use DEVICE_DT_NAME to be compatible with recent ZMK versions.
@@ -68,6 +70,7 @@ struct grid_processor_data {
     bool x_received;
     bool y_received;
     bool is_touching;
+    int64_t last_gesture_time; /* Timestamp of last triggered gesture */
 };
 
 static inline uint8_t get_grid_cell(const struct grid_processor_config *config, 
@@ -113,6 +116,10 @@ static void trigger_gesture(const struct device *dev) {
     data->is_touching = false;
     data->x_received = false;
     data->y_received = false;
+    
+    /* Record time to enforce cooldown */
+    data->last_gesture_time = k_uptime_get();
+
     k_mutex_unlock(&data->lock);
 
     uint8_t cell_idx = get_grid_cell(config, data, data->start_x, data->start_y);
@@ -179,13 +186,17 @@ static int input_processor_grid_handle_event(const struct device *dev,
     } 
     
     if (!data->is_touching && data->x_received && data->y_received) {
-        data->is_touching = true;
-        data->start_x = data->last_x;
-        data->start_y = data->last_y;
+        /* Cool-down check: Don't start a new session immediately after a gesture */
+        if (k_uptime_get() - data->last_gesture_time >= GESTURE_COOLDOWN_MS) {
+            data->is_touching = true;
+            data->start_x = data->last_x;
+            data->start_y = data->last_y;
+        }
     }
     k_mutex_unlock(&data->lock);
 
     k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
+    
     bool suppress = config->suppress_pointer;
     return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
 }
@@ -210,6 +221,7 @@ static int input_processor_grid_init(const struct device *dev) {
     data->dev = dev;
     data->config = config;
     data->is_touching = false;
+    data->last_gesture_time = 0;
 
     uint32_t w = config->x_max - config->x_min;
     uint32_t h = config->y_max - config->y_min;
