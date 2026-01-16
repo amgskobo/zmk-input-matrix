@@ -59,8 +59,9 @@
 | :--- | :--- | :--- | :--- |
 | `rows` | `int` | **必須** | 行数。 |
 | `cols` | `int` | **必須** | 列数。 |
-| `timeout-ms` | `int` | `80` | ジェスチャー終了を検出するまでの時間 (ms)。 |
-| `flick-threshold` | `int` | `50` | フリックとタップを区別する最小ピクセル数。 |
+| `timeout-ms` | `int` | `50` | ジェスチャー終了を検出するまでの時間 (ms)。 |
+| `cooldown-ms` | `int` | `100` | ジェスチャー実行後、次の入力を受け付けるまでのクールダウン時間 (ms)。 |
+| `flick-threshold` | `int` | `300` | フリックとタップを区別する最小ピクセル数。 |
 | `suppress-pointer` | `bool` | `false` | `true` の場合、ABS イベントの伝播を停止（カーソル移動を無効化）。 |
 | `suppress-key` | `bool` | `false` | `true` の場合、KEY イベントの伝播を停止（BTN_TOUCH クリックを無効化）。 |
 | `x-min`/`x-max` | `int` | `0`/`1024` | 入力範囲。 |

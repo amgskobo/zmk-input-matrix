@@ -10,9 +10,9 @@
 
         rows = <1>;
         cols = <1>;
-        timeout-ms = <80>;
-        cooldown-ms = <150>;
-        flick-threshold = <50>;
+        timeout-ms = <50>;
+        cooldown-ms = <100>;
+        flick-threshold = <300>;
         x-min = <0>;
         x-max = <1024>;
         y-min = <0>;

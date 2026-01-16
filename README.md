@@ -81,8 +81,9 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 | :--- | :--- | :--- | :--- |
 | `rows` | `int` | **Required** | Number of rows. |
 | `cols` | `int` | **Required** | Number of columns. |
-| `timeout-ms` | `int` | `80` | Time (ms) to detect gesture end. |
-| `flick-threshold` | `int` | `50` | Min pixels for a flick vs tap. |
+| `timeout-ms` | `int` | `50` | Time (ms) to detect gesture end. |
+| `cooldown-ms` | `int` | `100` | Cooldown period (ms) after gesture execution before accepting new input. |
+| `flick-threshold` | `int` | `300` | Min pixels for a flick vs tap. |
 | `suppress-pointer` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |
 | `suppress-key` | `bool` | `false` | If `true`, stops KEY event propagation (disables BTN_TOUCH clicks). |
 | `x-min`/`x-max` | `int` | `0`/`1024` | Input range. |
