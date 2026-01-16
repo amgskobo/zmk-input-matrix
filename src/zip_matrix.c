@@ -137,7 +137,7 @@ static void trigger_gesture(const struct device *dev) {
                 .timestamp = k_uptime_get()
             };
             zmk_behavior_queue_add(&event, *binding, true, 0);
-            zmk_behavior_queue_add(&event, *binding, false, 30);
+            zmk_behavior_queue_add(&event, *binding, false, 20);
         }
     }
 }

@@ -31,15 +31,15 @@ properties:
     description: Maximum Y coordinate.
   flick-threshold:
     type: int
-    default: 50
+    default: 300
     description: Minimum pixels to register a flick.
   timeout-ms:
     type: int
-    default: 80
+    default: 50
     description: Watchdog timeout (ms) for gesture completion.
   cooldown-ms:
     type: int
-    default: 150
+    default: 100
     description: Cooldown period (ms) after gesture execution before accepting new input.
   suppress-pointer:
     type: boolean
