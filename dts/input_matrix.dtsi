@@ -11,6 +11,7 @@
         rows = <1>;
         cols = <1>;
         timeout-ms = <80>;
+        cooldown-ms = <150>;
         flick-threshold = <50>;
         x-min = <0>;
         x-max = <1024>;

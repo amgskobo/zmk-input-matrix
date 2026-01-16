@@ -37,6 +37,10 @@ properties:
     type: int
     default: 80
     description: Watchdog timeout (ms) for gesture completion.
+  cooldown-ms:
+    type: int
+    default: 150
+    description: Cooldown period (ms) after gesture execution before accepting new input.
   suppress-pointer:
     type: boolean
     description: Consume ABS pointer events (X/Y coordinates).

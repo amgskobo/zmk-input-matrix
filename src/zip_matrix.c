@@ -15,8 +15,6 @@
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
-#define GESTURE_COOLDOWN_MS 450
-
 /* * MANUAL MACRO DEFINITION (SHIM)
  * This replaces the missing ZMK macro. It extracts behavior + params from the Devicetree.
  * We use DEVICE_DT_NAME to be compatible with recent ZMK versions.
@@ -50,6 +48,7 @@ struct grid_processor_config {
     uint16_t y_max;
     uint16_t flick_threshold;
     uint16_t timeout_ms;
+    uint16_t cooldown_ms;
     bool suppress_pointer;
     bool suppress_key;
     const struct grid_cell_config *cells;
@@ -158,6 +157,9 @@ static int input_processor_grid_handle_event(const struct device *dev,
                                               struct zmk_input_processor_state *state) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
 
+    /* Reschedule watchdog unconditionally for ANY event to keep session alive during activity */
+    k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
+
     const struct grid_processor_config *config = data->config;
 
     /* Conditionally suppress KEY events (e.g., BTN_0, BTN_TOUCH) */
@@ -187,15 +189,14 @@ static int input_processor_grid_handle_event(const struct device *dev,
     
     if (!data->is_touching && data->x_received && data->y_received) {
         /* Cool-down check: Don't start a new session immediately after a gesture */
-        if (k_uptime_get() - data->last_gesture_time >= GESTURE_COOLDOWN_MS) {
+        if (k_uptime_get() - data->last_gesture_time >= config->cooldown_ms) {
             data->is_touching = true;
             data->start_x = data->last_x;
             data->start_y = data->last_y;
         }
     }
-    k_mutex_unlock(&data->lock);
 
-    k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
+    k_mutex_unlock(&data->lock);
     
     bool suppress = config->suppress_pointer;
     return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
@@ -273,6 +274,7 @@ static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
         .y_max = DT_INST_PROP(n, y_max),                                                      \
         .flick_threshold = DT_INST_PROP(n, flick_threshold),                                  \
         .timeout_ms = DT_INST_PROP(n, timeout_ms),                                            \
+        .cooldown_ms = DT_INST_PROP(n, cooldown_ms),                                          \
         .suppress_pointer = DT_INST_PROP(n, suppress_pointer),                                \
         .suppress_key = DT_INST_PROP(n, suppress_key),                                         \
         .cells = processor_grid_cells_##n,                                                    \
