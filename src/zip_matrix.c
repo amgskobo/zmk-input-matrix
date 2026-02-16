@@ -68,6 +68,8 @@ struct grid_processor_data {
     uint32_t cell_h_inv; /* Fixed-point reciprocal (Q16) */
 
     bool is_touching;
+    bool received_x;
+    bool received_y;
     int64_t last_gesture_time; /* Timestamp of last triggered gesture */
 };
 
@@ -105,6 +107,7 @@ static inline uint8_t get_direction_4way(int32_t dx, int32_t dy, uint16_t thresh
 static void trigger_gesture(const struct device *dev) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
     const struct grid_processor_config *config = data->config;
+    uint16_t s_x, s_y, l_x, l_y;
 
     k_mutex_lock(&data->lock, K_FOREVER);
     if (!data->is_touching) {
@@ -113,20 +116,29 @@ static void trigger_gesture(const struct device *dev) {
     }
     data->is_touching = false;
 
+    /* If an axis was never received, treat delta as 0 by matching start to last */
+    s_x = data->received_x ? data->start_x : data->last_x;
+    s_y = data->received_y ? data->start_y : data->last_y;
+    l_x = data->last_x;
+    l_y = data->last_y;
+
+    data->received_x = false;
+    data->received_y = false;
+
     /* Record time to enforce cooldown */
     data->last_gesture_time = k_uptime_get();
 
     k_mutex_unlock(&data->lock);
 
-    uint8_t cell_idx = get_grid_cell(config, data, data->start_x, data->start_y);
+    uint8_t cell_idx = get_grid_cell(config, data, s_x, s_y);
     if (cell_idx < config->cell_count) {
         /* Use 32-bit signed math to prevent 16-bit overflow during subtraction */
-        int32_t dx = (int32_t)data->last_x - (int32_t)data->start_x;
-        int32_t dy = (int32_t)data->last_y - (int32_t)data->start_y;
+        int32_t dx = (int32_t)l_x - (int32_t)s_x;
+        int32_t dy = (int32_t)l_y - (int32_t)s_y;
         uint8_t dir = get_direction_4way(dx, dy, config->flick_threshold);
         
         LOG_DBG("Gesture: Cell %u, Dir %u (start %u,%u) (delta %d,%d)", 
-                cell_idx, dir, data->start_x, data->start_y, dx, dy);
+                cell_idx, dir, s_x, s_y, dx, dy);
 
         struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&config->cells[cell_idx].bindings[dir];
         if (binding->behavior_dev) {
@@ -155,49 +167,52 @@ static int input_processor_grid_handle_event(const struct device *dev,
                                               struct zmk_input_processor_state *state) {
     struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
 
-    /* Reschedule watchdog unconditionally for ANY event to keep session alive during activity */
-    k_work_reschedule(&data->watchdog, K_MSEC(data->config->timeout_ms));
-
     const struct grid_processor_config *config = data->config;
 
-    /* Conditionally suppress KEY events (e.g., BTN_0, BTN_TOUCH) */
-    if (event->type == INPUT_EV_KEY) {
+    switch (event->type) {
+    case INPUT_EV_ABS:
+        k_mutex_lock(&data->lock, K_FOREVER);
+        
+        /* Check cooldown */
+        if (!data->is_touching && (k_uptime_get() - data->last_gesture_time < config->cooldown_ms)) {
+            k_mutex_unlock(&data->lock);
+            return config->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        }
+
+        if (event->code == INPUT_ABS_X) {
+            if (!data->received_x) {
+                data->start_x = event->value;
+                data->received_x = true;
+            }
+            data->last_x = event->value;
+        } else if (event->code == INPUT_ABS_Y) {
+            if (!data->received_y) {
+                data->start_y = event->value;
+                data->received_y = true;
+            }
+            data->last_y = event->value;
+        }
+        data->is_touching = true;
+        k_mutex_unlock(&data->lock);
+
+        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
+        return config->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+
+    case INPUT_EV_KEY:
         if (config->suppress_key) {
             LOG_DBG("KEY event suppressed (code=%u)", event->code);
             event->code = 0xFFF;
             event->sync = false;
             return ZMK_INPUT_PROC_STOP;
         }
-        return ZMK_INPUT_PROC_CONTINUE;
+        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
+        break;
+
+    default:
+        break;
     }
 
-    if (event->type != INPUT_EV_ABS) {
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-
-    k_mutex_lock(&data->lock, K_FOREVER);
-
-    if (event->code == INPUT_ABS_X) {
-        LOG_DBG("ABS_X: %d", event->value);
-        data->last_x = event->value;
-    } else if (event->code == INPUT_ABS_Y) {
-        LOG_DBG("ABS_Y: %d", event->value);
-        data->last_y = event->value;
-    }
-
-    if (!data->is_touching) {
-        /* Cool-down check: Don't start a new session immediately after a gesture */
-        if (k_uptime_get() - data->last_gesture_time >= config->cooldown_ms) {
-            data->is_touching = true;
-            data->start_x = data->last_x;
-            data->start_y = data->last_y;
-        }
-    }
-
-    k_mutex_unlock(&data->lock);
-
-    bool suppress = config->suppress_pointer;
-    return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int input_processor_grid_init(const struct device *dev) {
@@ -220,6 +235,8 @@ static int input_processor_grid_init(const struct device *dev) {
     data->dev = dev;
     data->config = config;
     data->is_touching = false;
+    data->received_x = false;
+    data->received_y = false;
     data->last_gesture_time = 0;
 
     uint32_t w = config->x_max - config->x_min;
