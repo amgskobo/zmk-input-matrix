@@ -38,11 +38,33 @@
     timeout-ms = <80>;
     flick-threshold = <50>;
 
+    /* 
+     * 標準的な 12キー T9 レイアウト (4行 x 3列)
+     * [1] [2] [3]
+     * [4] [5] [6]
+     * [7] [8] [9]
+     * [*] [0] [#]
+     */
+
     /* Row 0: 1, 2(ABC), 3(DEF) */
     cell_00 { bindings = <&kp N1 &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
-    cell_01 { bindings = <&kp A  &kp C  &kp N2   &kp B    &kp A>; };
-    cell_02 { bindings = <&kp D  &kp F  &kp N3   &kp E    &kp D>; };
-    /* ... 他のセル ... */
+    cell_01 { bindings = <&kp A  &kp C  &kp N2   &kp B    &kp A>; };    /* Tap=A, Left=B, Up=C */
+    cell_02 { bindings = <&kp D  &kp F  &kp N3   &kp E    &kp D>; };    /* Tap=D, Left=E, Up=F */
+
+    /* Row 1: 4(GHI), 5(JKL), 6(MNO) */
+    cell_03 { bindings = <&kp G  &kp I  &kp N4   &kp H    &kp G>; };
+    cell_04 { bindings = <&kp J  &kp L  &kp N5   &kp K    &kp J>; };
+    cell_05 { bindings = <&kp M  &kp O  &kp N6   &kp N    &kp M>; };
+
+    /* Row 2: 7(PQRS), 8(TUV), 9(WXYZ) */
+    cell_06 { bindings = <&kp P  &kp R  &kp S    &kp Q    &kp N7>; };
+    cell_07 { bindings = <&kp T  &kp V  &kp N8   &kp U    &kp T>; };
+    cell_08 { bindings = <&kp W  &kp Y  &kp Z    &kp X    &kp N9>; };
+
+    /* Row 3: *, 0, # */
+    cell_09 { bindings = <&kp STAR  &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    cell_10 { bindings = <&kp N0    &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
+    cell_11 { bindings = <&kp HASH  &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
 };
 
 /* リスナーへの割り当て */
@@ -66,6 +88,39 @@
 | `suppress-key` | `bool` | `false` | `true` の場合、KEY イベントの伝播を停止（BTN_TOUCH クリックを無効化）。 |
 | `x-min`/`x-max` | `int` | `0`/`1024` | 入力範囲。 |
 | `y-min`/`y-max` | `int` | `0`/`1024` | 入力範囲。 |
+
+### 子ノードとグリッドのマッピング
+
+ドライバーは、子ノードを **行優先順**（Row-Major Order: 左から右、上から下）でグリッドセルにマッピングします。
+
+#### マッピングのロジック
+
+1. **ソート**: ドライバーは、子ノードをノード名の **アルファベット順** に処理します。
+2. **インデックス**: ノードはインデックス 0 から順にグリッドセルに割り当てられます。
+    - `Index = (Row * Total_Cols) + Col`
+
+**重要**: アルファベット順のソートのため、セルが10個以上ある場合は、正しい順序を保つために `cell_01`...`cell_10` のようにゼロ埋めを使用してください。
+
+#### 例: 4x3 グリッド (12セル)
+
+`rows = <4>; cols = <3>;`
+
+| | Column 0 (左) | Column 1 (中央) | Column 2 (右) |
+| :--- | :--- | :--- | :--- |
+| **Row 0 (上)** | `cell_00` (Idx 0) | `cell_01` (Idx 1) | `cell_02` (Idx 2) |
+| **Row 1 (中)** | `cell_03` (Idx 3) | `cell_04` (Idx 4) | `cell_05` (Idx 5) |
+| **Row 2 (下)** | `cell_06` (Idx 6) | `cell_07` (Idx 7) | `cell_08` (Idx 8) |
+| **Row 3 (底)** | `cell_09` (Idx 9) | `cell_10` (Idx 10) | `cell_11` (Idx 11) |
+
+#### バインディングフォーマット
+
+各子ノードは、以下の特定の順序で正確に5つのエントリを持つ `bindings` 配列を持つ必要があります：
+
+1. **Center** (タップ / フリックなし)
+2. **North** (上フリック)
+3. **South** (下フリック)
+4. **West** (左フリック)
+5. **East** (右フリック)
 
 ## イベントの透過性と座標系
 
