@@ -210,6 +210,7 @@ static int input_processor_grid_handle_event(const struct device *dev,
         break;
 
     default:
+        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
         break;
     }
 
