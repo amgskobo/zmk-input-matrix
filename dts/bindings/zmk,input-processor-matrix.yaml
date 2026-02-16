@@ -35,7 +35,7 @@ properties:
     description: Minimum pixels to register a flick.
   timeout-ms:
     type: int
-    default: 50
+    default: 100
     description: Watchdog timeout (ms) for gesture completion.
   cooldown-ms:
     type: int
