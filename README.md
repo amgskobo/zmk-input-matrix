@@ -10,6 +10,7 @@ This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y
 - **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
 - **Lightweight Math**: High-performance Q16 fixed-point math and max-axis comparison for minimal MCU overhead.
 - **5 Gestures per Cell**: Center (Tap), North, South, West, East.
+- **Simple Tap Logic**: Triggers a Center (Tap) event if the signal stops and `timeout-ms` elapses without any flick movement.
 
 ## Installation
 
@@ -35,7 +36,7 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 /* Define the processor */
 &zip_matrix {
     rows = <4>; cols = <3>;
-    timeout-ms = <80>;
+    timeout-ms = <100>;
     flick-threshold = <50>;
 
     /* 
@@ -81,7 +82,7 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 | :--- | :--- | :--- | :--- |
 | `rows` | `int` | **Required** | Number of rows. |
 | `cols` | `int` | **Required** | Number of columns. |
-| `timeout-ms` | `int` | `50` | Time (ms) to detect gesture end. |
+| `timeout-ms` | `int` | `100` | Time (ms) after signal loss to confirm a Tap gesture. |
 | `cooldown-ms` | `int` | `100` | Cooldown period (ms) after gesture execution before accepting new input. |
 | `flick-threshold` | `int` | `300` | Min pixels for a flick vs tap. |
 | `suppress-pointer` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |
