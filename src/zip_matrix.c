@@ -125,7 +125,8 @@ static void trigger_gesture(const struct device *dev) {
         int32_t dy = (int32_t)data->last_y - (int32_t)data->start_y;
         uint8_t dir = get_direction_4way(dx, dy, config->flick_threshold);
         
-        LOG_DBG("Gesture: Cell %u, Dir %u (delta %d,%d)", cell_idx, dir, dx, dy);
+        LOG_DBG("Gesture: Cell %u, Dir %u (start %u,%u) (delta %d,%d)", 
+                cell_idx, dir, data->start_x, data->start_y, dx, dy);
 
         struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&config->cells[cell_idx].bindings[dir];
         if (binding->behavior_dev) {
@@ -182,8 +183,8 @@ static int input_processor_grid_handle_event(const struct device *dev,
     } else if (event->code == INPUT_ABS_Y) {
         LOG_DBG("ABS_Y: %d", event->value);
         data->last_y = event->value;
-    } 
-    
+    }
+
     if (!data->is_touching) {
         /* Cool-down check: Don't start a new session immediately after a gesture */
         if (k_uptime_get() - data->last_gesture_time >= config->cooldown_ms) {
@@ -194,7 +195,7 @@ static int input_processor_grid_handle_event(const struct device *dev,
     }
 
     k_mutex_unlock(&data->lock);
-    
+
     bool suppress = config->suppress_pointer;
     return suppress ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
 }
