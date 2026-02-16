@@ -236,7 +236,8 @@ static int input_processor_grid_init(const struct device *dev) {
 
     k_work_init_delayable(&data->watchdog, watchdog_callback);
 
-    LOG_INF("zip_matrix[%s] %ux%u ready", dev->name, config->rows, config->cols);
+    LOG_INF("zip_matrix[%s] %ux%u ready, timeout=%u", 
+            dev->name, config->rows, config->cols, config->timeout_ms);
     return 0;
 }
 
