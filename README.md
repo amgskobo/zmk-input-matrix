@@ -5,12 +5,13 @@ This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y
 ## Features
 
 - **Dynamic Grid**: Configure any size grid (e.g., 1x1, 2x2, 3x3, 4x3).
-- **Robust Triggering**: Uses a precision silence watchdog to detect gesture completion, ensuring compatibility with all trackpad drivers.
+- **Event-Driven Triggering**: Responds immediately to release sentinel (`0xFFFF`) signals. Eliminates timer dependency for best-in-class response time.
+- **Precision Session Sync**: Waits for both X and Y axes to report initial coordinates before starting a session, preventing false triggers.
 - **Flexible Event Filtering**: Independently suppress ABS (pointer) and KEY (button) events with `suppress-pointer` and `suppress-key` properties.
 - **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
-- **Lightweight Math**: High-performance Q16 fixed-point math and max-axis comparison for minimal MCU overhead.
+- **Optimized Calculation**: No movement-time overhead; coordinate-to-cell math is performed exactly once upon gesture completion.
 - **5 Gestures per Cell**: Center (Tap), North, South, West, East.
-- **Simple Tap Logic**: Triggers a Center (Tap) event if the signal stops and `timeout-ms` elapses without any flick movement.
+- **Simple Release Logic**: Triggers immediately when the sensor reports a finger-up (release) signal.
 
 ## Installation
 
@@ -30,7 +31,7 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 
 **Note**: You do not need to enable a Kconfig option manually. The module is automatically enabled when you use the `zmk,input-processor-matrix` compatible string in your overlay.
 
-**Example: 4x3 Grid (Standard T9 Layout)**
+#### Example: 4x3 Grid (Standard T9 Layout)
 
 ```dts
 /* Define the processor */
@@ -82,8 +83,8 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 | :--- | :--- | :--- | :--- |
 | `rows` | `int` | **Required** | Number of rows. |
 | `cols` | `int` | **Required** | Number of columns. |
-| `timeout-ms` | `int` | `100` | Time (ms) after signal loss to confirm a Tap gesture. |
-| `cooldown-ms` | `int` | `100` | Cooldown period (ms) after gesture execution before accepting new input. |
+| `timeout-ms` | `int` | `100` | (Ignored) Previously used for watchdog timeout. Release is now event-driven. |
+| `cooldown-ms` | `int` | `100` | (Ignored) Previously used for cooldown period. |
 | `flick-threshold` | `int` | `300` | Min pixels for a flick vs tap. |
 | `suppress-pointer` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |
 | `suppress-key` | `bool` | `false` | If `true`, stops KEY event propagation (disables BTN_TOUCH clicks). |
@@ -145,5 +146,3 @@ Input processors in ZMK form a chain. `zip_matrix` can either "consume" events o
 > [!TIP]
 > To use a trackpad **only** as a macro grid (like a T9 keypad), set both `suppress-pointer` and `suppress-key` to `true`.
 > To use it as a mouse **with** gesture capabilities (e.g., flicking at edges), set them to `false`, but ensure `zip_matrix` is positioned **before** any ABS-to-REL conversion in your `input-processors` list.
-
-```

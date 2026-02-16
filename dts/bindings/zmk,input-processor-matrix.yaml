@@ -33,14 +33,6 @@ properties:
     type: int
     default: 300
     description: Minimum pixels to register a flick.
-  timeout-ms:
-    type: int
-    default: 100
-    description: (Ignored) Previously used for watchdog timeout. Release is now event-driven.
-  cooldown-ms:
-    type: int
-    default: 100
-    description: (Ignored) Previously used for cooldown period.
   suppress-pointer:
     type: boolean
     description: Consume ABS pointer events (X/Y coordinates).

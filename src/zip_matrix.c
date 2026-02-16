@@ -57,7 +57,8 @@ static void trigger_gesture(const struct device *dev) {
 
     k_mutex_lock(&data->lock, K_FOREVER);
     if (!data->is_touching) {
-        data->start_x = data->start_y = 0xFFFF; // Reset stale coordinates even if not triggered
+        LOG_DBG("Release received but session not active. Resetting.");
+        data->start_x = data->start_y = 0xFFFF;
         k_mutex_unlock(&data->lock);
         return;
     }
@@ -70,12 +71,18 @@ static void trigger_gesture(const struct device *dev) {
     uint32_t adx = (dx < 0 ? -dx : dx), ady = (dy < 0 ? -dy : dy);
     uint8_t dir = (adx < cfg->flick_threshold && ady < cfg->flick_threshold) ? 0 :
                   (ady > adx) ? (dy < 0 ? 1 : 2) : (dx < 0 ? 3 : 4);
+    uint8_t cell = get_grid_cell(cfg, sx, sy);
 
-    struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&cfg->cells[get_grid_cell(cfg, sx, sy)].bindings[dir];
+    LOG_DBG("Gesture: Cell %u, Dir %u (delta X:%d Y:%d)", cell, dir, dx, dy);
+
+    struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&cfg->cells[cell].bindings[dir];
     if (binding->behavior_dev) {
+        LOG_DBG("Triggering behavior: %s", binding->behavior_dev);
         struct zmk_behavior_binding_event event = { .position = INT32_MAX, .timestamp = k_uptime_get() };
         zmk_behavior_queue_add(&event, *binding, true, 0);
         zmk_behavior_queue_add(&event, *binding, false, 20);
+    } else {
+        LOG_DBG("No binding configured for Cell %u, Dir %u", cell, dir);
     }
 }
 
@@ -87,6 +94,7 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
     if (event->type == INPUT_EV_ABS && (event->code == INPUT_ABS_X || event->code == INPUT_ABS_Y)) {
         k_mutex_lock(&data->lock, K_FOREVER);
         if (event->value == 0xFFFF) {
+            LOG_DBG("Release sentinel (0xFFFF) received for axis %u", event->code);
             k_mutex_unlock(&data->lock);
             trigger_gesture(dev);
         } else {
@@ -94,8 +102,10 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
             uint16_t *l = (event->code == INPUT_ABS_X) ? &data->last_x : &data->last_y;
             if (*s == 0xFFFF) *s = event->value;
             *l = event->value;
+            LOG_DBG("Move: X:%u Y:%u", data->last_x, data->last_y);
 
-            if (data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
+            if (!data->is_touching && data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
+                LOG_DBG("Session active: Synchronized start at (%u, %u)", data->start_x, data->start_y);
                 data->is_touching = true;
             }
             k_mutex_unlock(&data->lock);
