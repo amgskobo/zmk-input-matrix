@@ -177,8 +177,10 @@ static int input_processor_grid_handle_event(const struct device *dev,
     k_mutex_lock(&data->lock, K_FOREVER);
 
     if (event->code == INPUT_ABS_X) {
+        LOG_DBG("ABS_X: %d", event->value);
         data->last_x = event->value;
     } else if (event->code == INPUT_ABS_Y) {
+        LOG_DBG("ABS_Y: %d", event->value);
         data->last_y = event->value;
     } 
     
