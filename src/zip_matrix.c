@@ -66,8 +66,7 @@ struct grid_processor_data {
     uint16_t start_y;
     uint32_t cell_w_inv; /* Fixed-point reciprocal (Q16) */
     uint32_t cell_h_inv; /* Fixed-point reciprocal (Q16) */
-    bool x_received;
-    bool y_received;
+
     bool is_touching;
     int64_t last_gesture_time; /* Timestamp of last triggered gesture */
 };
@@ -113,9 +112,7 @@ static void trigger_gesture(const struct device *dev) {
         return;
     }
     data->is_touching = false;
-    data->x_received = false;
-    data->y_received = false;
-    
+
     /* Record time to enforce cooldown */
     data->last_gesture_time = k_uptime_get();
 
@@ -181,13 +178,11 @@ static int input_processor_grid_handle_event(const struct device *dev,
 
     if (event->code == INPUT_ABS_X) {
         data->last_x = event->value;
-        data->x_received = true;
     } else if (event->code == INPUT_ABS_Y) {
         data->last_y = event->value;
-        data->y_received = true;
     } 
     
-    if (!data->is_touching && data->x_received && data->y_received) {
+    if (!data->is_touching) {
         /* Cool-down check: Don't start a new session immediately after a gesture */
         if (k_uptime_get() - data->last_gesture_time >= config->cooldown_ms) {
             data->is_touching = true;
