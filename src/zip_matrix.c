@@ -15,10 +15,6 @@
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
-/* * MANUAL MACRO DEFINITION (SHIM)
- * This replaces the missing ZMK macro. It extracts behavior + params from the Devicetree.
- * We use DEVICE_DT_NAME to be compatible with recent ZMK versions.
- */
 #ifndef ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX
 #define ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(n, p, i) \
     { \
@@ -27,237 +23,100 @@ LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
         .param2 = COND_CODE_0(DT_PHA_HAS_CELL_AT_IDX(n, p, i, param2), (0), (DT_PHA_BY_IDX(n, p, i, param2))), \
     }
 #endif
-/* 
- * Each cell has exactly 5 bindings:
- * 0: Center (Tap)
- * 1: North
- * 2: South
- * 3: West
- * 4: East
- */
-struct grid_cell_config {
-    struct zmk_behavior_binding bindings[5];
-};
+
+struct grid_cell_config { struct zmk_behavior_binding bindings[5]; };
 
 struct grid_processor_config {
-    uint8_t rows;
-    uint8_t cols;
-    uint16_t x_min;
-    uint16_t x_max;
-    uint16_t y_min;
-    uint16_t y_max;
-    uint16_t flick_threshold;
-    uint16_t timeout_ms;
-    uint16_t cooldown_ms;
-    bool suppress_pointer;
-    bool suppress_key;
+    uint8_t rows, cols;
+    uint16_t x_min, x_max, y_min, y_max, flick_threshold;
+    bool suppress_pointer, suppress_key;
     const struct grid_cell_config *cells;
     size_t cell_count;
 };
 
 struct grid_processor_data {
-    struct k_work_delayable watchdog;
     struct k_mutex lock;
-    const struct device *dev;
     const struct grid_processor_config *config;
-    uint16_t last_x;
-    uint16_t last_y;
-    uint16_t start_x;
-    uint16_t start_y;
-    uint32_t cell_w_inv; /* Fixed-point reciprocal (Q16) */
-    uint32_t cell_h_inv; /* Fixed-point reciprocal (Q16) */
-
+    uint16_t start_x, start_y, last_x, last_y;
     bool is_touching;
-    bool received_x;
-    bool received_y;
-    int64_t last_gesture_time; /* Timestamp of last triggered gesture */
 };
 
-static inline uint8_t get_grid_cell(const struct grid_processor_config *config, 
-                                    struct grid_processor_data *data, 
-                                    uint16_t x, uint16_t y) {
-    uint16_t dx = CLAMP(x, config->x_min, config->x_max) - config->x_min;
-    uint16_t dy = CLAMP(y, config->y_min, config->y_max) - config->y_min;
-
-    /* Use 64-bit intermediate for overflow-proof 16:16 fixed-point math */
-    uint8_t col = (uint8_t)(((uint64_t)dx * data->cell_w_inv) >> 16);
-    uint8_t row = (uint8_t)(((uint64_t)dy * data->cell_h_inv) >> 16);
-
-    if (col >= config->cols) col = config->cols - 1;
-    if (row >= config->rows) row = config->rows - 1;
-
-    return row * config->cols + col;
-}
-
-static inline uint8_t get_direction_4way(int32_t dx, int32_t dy, uint16_t threshold) {
-    uint32_t abs_dx = (dx < 0) ? -dx : dx;
-    uint32_t abs_dy = (dy < 0) ? -dy : dy;
-
-    if (abs_dx < (uint32_t)threshold && abs_dy < (uint32_t)threshold) {
-        return 0; /* Tap/Center */
-    }
-
-    if (abs_dy > abs_dx) {
-        return (dy < 0) ? 1 : 2; /* North : South */
-    } else {
-        return (dx < 0) ? 3 : 4; /* West : East */
-    }
+static uint8_t get_grid_cell(const struct grid_processor_config *cfg, uint16_t x, uint16_t y) {
+    uint32_t dx = CLAMP(x, cfg->x_min, cfg->x_max) - cfg->x_min;
+    uint32_t dy = CLAMP(y, cfg->y_min, cfg->y_max) - cfg->y_min;
+    uint32_t w = cfg->x_max - cfg->x_min;
+    uint32_t h = cfg->y_max - cfg->y_min;
+    uint8_t col = (dx * cfg->cols) / w;
+    uint8_t row = (dy * cfg->rows) / h;
+    return MIN(row, cfg->rows - 1) * cfg->cols + MIN(col, cfg->cols - 1);
 }
 
 static void trigger_gesture(const struct device *dev) {
-    struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
-    const struct grid_processor_config *config = data->config;
-    uint16_t s_x, s_y, l_x, l_y;
+    struct grid_processor_data *data = dev->data;
+    const struct grid_processor_config *cfg = data->config;
 
     k_mutex_lock(&data->lock, K_FOREVER);
     if (!data->is_touching) {
+        data->start_x = data->start_y = 0xFFFF; // Reset stale coordinates even if not triggered
         k_mutex_unlock(&data->lock);
         return;
     }
+    uint16_t sx = data->start_x, sy = data->start_y, lx = data->last_x, ly = data->last_y;
     data->is_touching = false;
-
-    /* If an axis was never received, treat delta as 0 by matching start to last */
-    s_x = data->received_x ? data->start_x : data->last_x;
-    s_y = data->received_y ? data->start_y : data->last_y;
-    l_x = data->last_x;
-    l_y = data->last_y;
-
-    data->received_x = false;
-    data->received_y = false;
-
-    /* Record time to enforce cooldown */
-    data->last_gesture_time = k_uptime_get();
-
+    data->start_x = data->start_y = 0xFFFF;
     k_mutex_unlock(&data->lock);
 
-    uint8_t cell_idx = get_grid_cell(config, data, s_x, s_y);
-    if (cell_idx < config->cell_count) {
-        /* Use 32-bit signed math to prevent 16-bit overflow during subtraction */
-        int32_t dx = (int32_t)l_x - (int32_t)s_x;
-        int32_t dy = (int32_t)l_y - (int32_t)s_y;
-        uint8_t dir = get_direction_4way(dx, dy, config->flick_threshold);
-        
-        LOG_DBG("Gesture: Cell %u, Dir %u (start %u,%u) (delta %d,%d)", 
-                cell_idx, dir, s_x, s_y, dx, dy);
+    int32_t dx = (int32_t)lx - sx, dy = (int32_t)ly - sy;
+    uint32_t adx = (dx < 0 ? -dx : dx), ady = (dy < 0 ? -dy : dy);
+    uint8_t dir = (adx < cfg->flick_threshold && ady < cfg->flick_threshold) ? 0 :
+                  (ady > adx) ? (dy < 0 ? 1 : 2) : (dx < 0 ? 3 : 4);
 
-        struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&config->cells[cell_idx].bindings[dir];
-        if (binding->behavior_dev) {
-            struct zmk_behavior_binding_event event = {
-                .position = INT32_MAX,
-                .timestamp = k_uptime_get()
-            };
-            zmk_behavior_queue_add(&event, *binding, true, 0);
-            zmk_behavior_queue_add(&event, *binding, false, 20);
-        }
+    struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&cfg->cells[get_grid_cell(cfg, sx, sy)].bindings[dir];
+    if (binding->behavior_dev) {
+        struct zmk_behavior_binding_event event = { .position = INT32_MAX, .timestamp = k_uptime_get() };
+        zmk_behavior_queue_add(&event, *binding, true, 0);
+        zmk_behavior_queue_add(&event, *binding, false, 20);
     }
 }
 
-static void watchdog_callback(struct k_work *work) {
-    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    struct grid_processor_data *data = CONTAINER_OF(dwork, struct grid_processor_data, watchdog);
+static int input_processor_grid_handle_event(const struct device *dev, struct input_event *event,
+                                             uint32_t p1, uint32_t p2, struct zmk_input_processor_state *state) {
+    struct grid_processor_data *data = dev->data;
+    const struct grid_processor_config *cfg = data->config;
 
-    /* Use a reasonable timeout to ensure we don't drop the gesture under high CPU load */
-    trigger_gesture(data->dev);
-}
-
-static int input_processor_grid_handle_event(const struct device *dev,
-                                              struct input_event *event,
-                                              uint32_t param1,
-                                              uint32_t param2,
-                                              struct zmk_input_processor_state *state) {
-    struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
-
-    const struct grid_processor_config *config = data->config;
-
-    switch (event->type) {
-    case INPUT_EV_ABS:
+    if (event->type == INPUT_EV_ABS && (event->code == INPUT_ABS_X || event->code == INPUT_ABS_Y)) {
         k_mutex_lock(&data->lock, K_FOREVER);
-        
-        /* Check cooldown */
-        if (!data->is_touching && (k_uptime_get() - data->last_gesture_time < config->cooldown_ms)) {
+        if (event->value == 0xFFFF) {
             k_mutex_unlock(&data->lock);
-            k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
-            return config->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
-        }
+            trigger_gesture(dev);
+        } else {
+            uint16_t *s = (event->code == INPUT_ABS_X) ? &data->start_x : &data->start_y;
+            uint16_t *l = (event->code == INPUT_ABS_X) ? &data->last_x : &data->last_y;
+            if (*s == 0xFFFF) *s = event->value;
+            *l = event->value;
 
-        if (event->code == INPUT_ABS_X) {
-            if (!data->received_x) {
-                data->start_x = event->value;
-                data->received_x = true;
+            if (data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
+                data->is_touching = true;
             }
-            data->last_x = event->value;
-        } else if (event->code == INPUT_ABS_Y) {
-            if (!data->received_y) {
-                data->start_y = event->value;
-                data->received_y = true;
-            }
-            data->last_y = event->value;
+            k_mutex_unlock(&data->lock);
         }
-        data->is_touching = true;
-        k_mutex_unlock(&data->lock);
-
-        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
-        return config->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
-
-    case INPUT_EV_KEY:
-        if (config->suppress_key) {
-            LOG_DBG("KEY event suppressed (code=%u)", event->code);
-            event->code = 0xFFF;
-            event->sync = false;
-            return ZMK_INPUT_PROC_STOP;
-        }
-        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
-        break;
-
-    default:
-        k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
-        break;
+        return cfg->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
     }
-
-    return ZMK_INPUT_PROC_CONTINUE;
+    return (event->type == INPUT_EV_KEY && cfg->suppress_key) ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int input_processor_grid_init(const struct device *dev) {
-    struct grid_processor_data *data = (struct grid_processor_data *)dev->data;
-    const struct grid_processor_config *config = (const struct grid_processor_config *)dev->config;
-
-    if (config->cell_count != (config->rows * config->cols)) {
-        LOG_ERR("[%s] Mismatch: Rows*Cols (%u) != Child Nodes (%u)", 
-                dev->name, config->rows * config->cols, (uint32_t)config->cell_count);
-        return -EINVAL; 
-    }
-
-    if (config->x_max <= config->x_min || config->y_max <= config->y_min) {
-        LOG_ERR("[%s] Invalid range: X[%u-%u] Y[%u-%u]", 
-                dev->name, config->x_min, config->x_max, config->y_min, config->y_max);
-        return -EINVAL;
-    }
+    struct grid_processor_data *data = dev->data;
+    const struct grid_processor_config *cfg = dev->config;
+    if (cfg->cell_count != (cfg->rows * cfg->cols)) return -EINVAL;
+    if (cfg->x_max <= cfg->x_min || cfg->y_max <= cfg->y_min) return -EINVAL;
+    if (cfg->rows == 0 || cfg->cols == 0) return -EINVAL;
 
     k_mutex_init(&data->lock);
-    data->dev = dev;
-    data->config = config;
+    data->config = cfg;
+    data->start_x = data->start_y = 0xFFFF;
     data->is_touching = false;
-    data->received_x = false;
-    data->received_y = false;
-    data->last_gesture_time = 0;
-
-    uint32_t w = config->x_max - config->x_min;
-    uint32_t h = config->y_max - config->y_min;
-
-    if (config->cols > 0) {
-        data->cell_w_inv = ((uint64_t)config->cols << 16) / w;
-    }
-    if (config->rows > 0) {
-        data->cell_h_inv = ((uint64_t)config->rows << 16) / h;
-    }
-
-    data->last_x = (config->x_min + config->x_max) / 2;
-    data->last_y = (config->y_min + config->y_max) / 2;
-
-    k_work_init_delayable(&data->watchdog, watchdog_callback);
-
-    LOG_INF("zip_matrix[%s] %ux%u ready, timeout=%u", 
-            dev->name, config->rows, config->cols, config->timeout_ms);
+    LOG_INF("zip_matrix ready: %ux%u", cfg->rows, cfg->cols);
     return 0;
 }
 
@@ -265,42 +124,28 @@ static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
     .handle_event = input_processor_grid_handle_event,
 };
 
-#define GRID_CELL_CONFIG(node_id)                                             \
-    {                                                                         \
-        .bindings = {                                                         \
-            ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 0), \
-            ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 1), \
-            ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 2), \
-            ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 3), \
-            ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 4), \
-        }                                                                     \
-    },
+#define GRID_CELL_CONFIG(node_id) { .bindings = { \
+    ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 0), \
+    ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 1), \
+    ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 2), \
+    ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 3), \
+    ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(node_id, bindings, 4), \
+} },
 
-#define GRID_PROCESSOR_INST(n)                                                                \
-    static struct grid_processor_data processor_grid_data_##n = {};                           \
-                                                                                               \
-    static const struct grid_cell_config processor_grid_cells_##n[] = {                       \
-        DT_INST_FOREACH_CHILD(n, GRID_CELL_CONFIG)                                            \
-    };                                                                                        \
-                                                                                               \
-    static const struct grid_processor_config processor_grid_config_##n = {                   \
-        .rows = DT_INST_PROP(n, rows),                                                        \
-        .cols = DT_INST_PROP(n, cols),                                                        \
-        .x_min = DT_INST_PROP(n, x_min),                                                      \
-        .x_max = DT_INST_PROP(n, x_max),                                                      \
-        .y_min = DT_INST_PROP(n, y_min),                                                      \
-        .y_max = DT_INST_PROP(n, y_max),                                                      \
-        .flick_threshold = DT_INST_PROP(n, flick_threshold),                                  \
-        .timeout_ms = DT_INST_PROP(n, timeout_ms),                                            \
-        .cooldown_ms = DT_INST_PROP(n, cooldown_ms),                                          \
-        .suppress_pointer = DT_INST_PROP(n, suppress_pointer),                                \
-        .suppress_key = DT_INST_PROP(n, suppress_key),                                         \
-        .cells = processor_grid_cells_##n,                                                    \
-        .cell_count = ARRAY_SIZE(processor_grid_cells_##n),                                   \
-    };                                                                                        \
-    DEVICE_DT_INST_DEFINE(n, input_processor_grid_init, NULL,                                \
-                           &processor_grid_data_##n, &processor_grid_config_##n,               \
-                           POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                  \
+#define GRID_PROCESSOR_INST(n) \
+    static struct grid_processor_data processor_grid_data_##n = {}; \
+    static const struct grid_cell_config processor_grid_cells_##n[] = { DT_INST_FOREACH_CHILD(n, GRID_CELL_CONFIG) }; \
+    static const struct grid_processor_config processor_grid_config_##n = { \
+        .rows = DT_INST_PROP(n, rows), .cols = DT_INST_PROP(n, cols), \
+        .x_min = DT_INST_PROP(n, x_min), .x_max = DT_INST_PROP(n, x_max), \
+        .y_min = DT_INST_PROP(n, y_min), .y_max = DT_INST_PROP(n, y_max), \
+        .flick_threshold = DT_INST_PROP(n, flick_threshold), \
+        .suppress_pointer = DT_INST_PROP(n, suppress_pointer), .suppress_key = DT_INST_PROP(n, suppress_key), \
+        .cells = processor_grid_cells_##n, .cell_count = ARRAY_SIZE(processor_grid_cells_##n), \
+    }; \
+    DEVICE_DT_INST_DEFINE(n, input_processor_grid_init, NULL, \
+                           &processor_grid_data_##n, &processor_grid_config_##n, \
+                           POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, \
                            &grid_processor_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(GRID_PROCESSOR_INST)
