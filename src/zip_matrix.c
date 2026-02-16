@@ -176,6 +176,7 @@ static int input_processor_grid_handle_event(const struct device *dev,
         /* Check cooldown */
         if (!data->is_touching && (k_uptime_get() - data->last_gesture_time < config->cooldown_ms)) {
             k_mutex_unlock(&data->lock);
+            k_work_reschedule(&data->watchdog, K_MSEC(config->timeout_ms));
             return config->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
         }
 
