@@ -16,6 +16,9 @@
 
 LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 
+#define COORD_UNINITIALIZED UINT16_MAX
+#define COORD_INVALID_ZERO  0xFFF
+
 #ifndef ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX
 #define ZMK_BEHAVIOR_BINDING_FROM_PHANDLE_ARRAY_BY_IDX(n, p, i) \
     { \
@@ -50,12 +53,12 @@ static void update_coordinates(struct grid_processor_data *data, uint16_t code, 
     uint16_t *start_ptr = (code == INPUT_ABS_X) ? &data->coords.start_x : &data->coords.start_y;
     uint16_t *last_ptr = (code == INPUT_ABS_X) ? &data->coords.last_x : &data->coords.last_y;
 
-    if (*start_ptr == 0xFFFF) {
+    if (*start_ptr == COORD_UNINITIALIZED) {
         *start_ptr = (uint16_t)value;
     }
     *last_ptr = (uint16_t)value;
 
-    if (!data->session_active && data->coords.start_x != 0xFFFF && data->coords.start_y != 0xFFFF) {
+    if (!data->session_active && data->coords.start_x != COORD_UNINITIALIZED && data->coords.start_y != COORD_UNINITIALIZED) {
         data->session_active = true;
         LOG_DBG("Session active: initial coords set (%u, %u)", data->coords.start_x, data->coords.start_y);
     }
@@ -125,7 +128,13 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
             update_coordinates(data, event->code, event->value);
         }
         k_mutex_unlock(&data->lock);
-        return cfg->suppress_abs ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        
+        if (cfg->suppress_abs) {
+            event->code = COORD_INVALID_ZERO;
+            event->sync = false;
+            return ZMK_INPUT_PROC_STOP;
+        }
+        return ZMK_INPUT_PROC_CONTINUE;
 
     case INPUT_EV_KEY:
         if (event->code == INPUT_BTN_TOUCH) {
@@ -135,16 +144,21 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
             if (on) {
                 /* Start of touch (ON): clear all coordinate state */
                 data->session_active = false;
-                data->coords.start_x = data->coords.start_y = 0xFFFF;
-                data->coords.last_x = data->coords.last_y = 0xFFFF;
+                data->coords.start_x = data->coords.start_y = COORD_UNINITIALIZED;
+                data->coords.last_x = data->coords.last_y = COORD_UNINITIALIZED;
             }
             LOG_DBG("INPUT_BTN_TOUCH -> %u", on);
             k_mutex_unlock(&data->lock);
 
             if (!on) trigger_gesture(dev);
-            return cfg->suppress_key ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
         }
-        return cfg->suppress_key ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+
+        if (cfg->suppress_key) {
+            event->code = COORD_INVALID_ZERO;
+            event->sync = false;
+            return ZMK_INPUT_PROC_STOP;
+        }
+        return ZMK_INPUT_PROC_CONTINUE;
     }
 
     return ZMK_INPUT_PROC_CONTINUE;
@@ -166,8 +180,8 @@ static int input_processor_grid_init(const struct device *dev) {
 
     k_mutex_init(&data->lock);
     data->config = cfg;
-    data->coords.start_x = data->coords.start_y = 0xFFFF;
-    data->coords.last_x = data->coords.last_y = 0xFFFF;
+    data->coords.start_x = data->coords.start_y = COORD_UNINITIALIZED;
+    data->coords.last_x = data->coords.last_y = COORD_UNINITIALIZED;
     data->session_active = false;
     data->is_btn_touch = false;
 
