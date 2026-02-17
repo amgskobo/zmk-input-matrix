@@ -9,31 +9,23 @@ properties:
     type: int
     required: true
     description: Number of rows in the grid.
-  cols:
+  columns:
     type: int
     required: true
     description: Number of columns in the grid.
-  x-min:
+  x:
     type: int
-    default: 0
-    description: Minimum X coordinate.
-  x-max:
+    required: true
+    description: Maximum X coordinate (range is 0 to x).
+  y:
     type: int
-    default: 1024
-    description: Maximum X coordinate.
-  y-min:
+    required: true
+    description: Maximum Y coordinate (range is 0 to y).
+  threshold:
     type: int
-    default: 0
-    description: Minimum Y coordinate.
-  y-max:
-    type: int
-    default: 1024
-    description: Maximum Y coordinate.
-  flick-threshold:
-    type: int
-    default: 300
+    required: true
     description: Minimum pixels to register a flick.
-  suppress-pointer:
+  suppress-abs:
     type: boolean
     description: Consume ABS pointer events (X/Y coordinates).
   suppress-key:
@@ -46,4 +38,4 @@ child-binding:
     bindings:
       type: phandle-array
       required: true
-      description: Array of 5 behaviors (Center, N, S, W, E).
+      description: Array of 5 behaviors (Tap, Up, Down, Left, Right).

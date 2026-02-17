@@ -27,9 +27,9 @@ LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 struct grid_cell_config { struct zmk_behavior_binding bindings[5]; };
 
 struct grid_processor_config {
-    uint8_t rows, cols;
-    uint16_t x_min, x_max, y_min, y_max, flick_threshold;
-    bool suppress_pointer, suppress_key;
+    uint8_t rows, columns;
+    uint16_t x, y, threshold;
+    bool suppress_abs, suppress_key;
     const struct grid_cell_config *cells;
     size_t cell_count;
 };
@@ -38,17 +38,22 @@ struct grid_processor_data {
     struct k_mutex lock;
     const struct grid_processor_config *config;
     uint16_t start_x, start_y, last_x, last_y;
-    bool is_touching;
+    bool session_active;  /* Synchronized X and Y received within current touch window */
+    bool is_btn_touch;    /* Physical BTN_TOUCH state (ON/OFF) */
 };
 
 static uint8_t get_grid_cell(const struct grid_processor_config *cfg, uint16_t x, uint16_t y) {
-    uint32_t dx = CLAMP(x, cfg->x_min, cfg->x_max) - cfg->x_min;
-    uint32_t dy = CLAMP(y, cfg->y_min, cfg->y_max) - cfg->y_min;
-    uint32_t w = cfg->x_max - cfg->x_min;
-    uint32_t h = cfg->y_max - cfg->y_min;
-    uint8_t col = (dx * cfg->cols) / w;
-    uint8_t row = (dy * cfg->rows) / h;
-    return MIN(row, cfg->rows - 1) * cfg->cols + MIN(col, cfg->cols - 1);
+    uint32_t pos_x = CLAMP(x, 0, cfg->x);
+    uint32_t pos_y = CLAMP(y, 0, cfg->y);
+    
+    /* Ensure no division by zero even if config is somehow zero */
+    uint32_t max_x = MAX(1, cfg->x);
+    uint32_t max_y = MAX(1, cfg->y);
+    
+    uint8_t col = MIN(cfg->columns - 1, (uint8_t)((pos_x * cfg->columns) / max_x));
+    uint8_t row = MIN(cfg->rows - 1, (uint8_t)((pos_y * cfg->rows) / max_y));
+    
+    return (row * cfg->columns) + col;
 }
 
 static void trigger_gesture(const struct device *dev) {
@@ -56,33 +61,34 @@ static void trigger_gesture(const struct device *dev) {
     const struct grid_processor_config *cfg = data->config;
 
     k_mutex_lock(&data->lock, K_FOREVER);
-    if (!data->is_touching) {
-        LOG_DBG("Release received but session not active. Resetting.");
-        data->start_x = data->start_y = 0xFFFF;
-        k_mutex_unlock(&data->lock);
-        return;
-    }
-    uint16_t sx = data->start_x, sy = data->start_y, lx = data->last_x, ly = data->last_y;
-    data->is_touching = false;
-    data->start_x = data->start_y = 0xFFFF;
+    bool active = data->session_active;
+    uint16_t start_x = data->start_x, start_y = data->start_y;
+    uint16_t end_x = data->last_x, end_y = data->last_y;
+    data->session_active = false;
     k_mutex_unlock(&data->lock);
 
-    int32_t dx = (int32_t)lx - sx, dy = (int32_t)ly - sy;
-    uint32_t adx = (dx < 0 ? -dx : dx), ady = (dy < 0 ? -dy : dy);
-    uint8_t dir = (adx < cfg->flick_threshold && ady < cfg->flick_threshold) ? 0 :
-                  (ady > adx) ? (dy < 0 ? 1 : 2) : (dx < 0 ? 3 : 4);
-    uint8_t cell = get_grid_cell(cfg, sx, sy);
+    if (!active) {
+        LOG_DBG("Release ignored (session never activated)");
+        return;
+    }
 
-    LOG_DBG("Gesture: Cell %u, Dir %u (delta X:%d Y:%d)", cell, dir, dx, dy);
+    int32_t delta_x = (int32_t)end_x - (int32_t)start_x;
+    int32_t delta_y = (int32_t)end_y - (int32_t)start_y;
+    uint32_t abs_delta_x = (uint32_t)(delta_x < 0 ? -delta_x : delta_x);
+    uint32_t abs_delta_y = (uint32_t)(delta_y < 0 ? -delta_y : delta_y);
 
-    struct zmk_behavior_binding *binding = (struct zmk_behavior_binding *)&cfg->cells[cell].bindings[dir];
+    /* 0:Tap, 1:Up, 2:Down, 3:Left, 4:Right */
+    uint8_t gesture = (abs_delta_x < cfg->threshold && abs_delta_y < cfg->threshold) ? 0 :
+                      (abs_delta_y > abs_delta_x) ? (delta_y < 0 ? 1 : 2) : (delta_x < 0 ? 3 : 4);
+    uint8_t cell = get_grid_cell(cfg, start_x, start_y);
+
+    LOG_DBG("Gesture: Cell %u, Dir %u (dx=%d, dy=%d)", cell, gesture, delta_x, delta_y);
+
+    const struct zmk_behavior_binding *binding = &cfg->cells[cell].bindings[gesture];
     if (binding->behavior_dev) {
-        LOG_DBG("Triggering behavior: %s", binding->behavior_dev);
         struct zmk_behavior_binding_event event = { .position = INT32_MAX, .timestamp = k_uptime_get() };
         zmk_behavior_queue_add(&event, *binding, true, 0);
         zmk_behavior_queue_add(&event, *binding, false, 20);
-    } else {
-        LOG_DBG("No binding configured for Cell %u, Dir %u", cell, dir);
     }
 }
 
@@ -91,42 +97,71 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
     struct grid_processor_data *data = dev->data;
     const struct grid_processor_config *cfg = data->config;
 
-    if (event->type == INPUT_EV_ABS && (event->code == INPUT_ABS_X || event->code == INPUT_ABS_Y)) {
+    switch (event->type) {
+    case INPUT_EV_ABS:
+        if (event->code != INPUT_ABS_X && event->code != INPUT_ABS_Y) break;
+        
         k_mutex_lock(&data->lock, K_FOREVER);
-        if (event->value == 0xFFFF) {
-            LOG_DBG("Release sentinel (0xFFFF) received for axis %u", event->code);
-            k_mutex_unlock(&data->lock);
-            trigger_gesture(dev);
-        } else {
-            uint16_t *s = (event->code == INPUT_ABS_X) ? &data->start_x : &data->start_y;
-            uint16_t *l = (event->code == INPUT_ABS_X) ? &data->last_x : &data->last_y;
-            if (*s == 0xFFFF) *s = event->value;
-            *l = event->value;
-            LOG_DBG("Move: X:%u Y:%u", data->last_x, data->last_y);
+        if (data->is_btn_touch) {
+            uint16_t *start_ptr = (event->code == INPUT_ABS_X) ? &data->start_x : &data->start_y;
+            uint16_t *last_ptr = (event->code == INPUT_ABS_X) ? &data->last_x : &data->last_y;
+            
+            if (*start_ptr == 0xFFFF) *start_ptr = (uint16_t)event->value;
+            *last_ptr = (uint16_t)event->value;
 
-            if (!data->is_touching && data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
-                LOG_DBG("Session active: Synchronized start at (%u, %u)", data->start_x, data->start_y);
-                data->is_touching = true;
+            if (!data->session_active && data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
+                data->session_active = true;
+                LOG_DBG("Session active: initial coords set (%u, %u)", data->start_x, data->start_y);
             }
-            k_mutex_unlock(&data->lock);
         }
-        return cfg->suppress_pointer ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        k_mutex_unlock(&data->lock);
+        return cfg->suppress_abs ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+
+    case INPUT_EV_KEY:
+        if (event->code == BTN_TOUCH) {
+            bool on = (event->value != 0);
+            k_mutex_lock(&data->lock, K_FOREVER);
+            data->is_btn_touch = on;
+            if (on) {
+                /* Start of touch (ON): clear all coordinate state */
+                data->session_active = false;
+                data->start_x = data->start_y = 0xFFFF;
+                data->last_x = data->last_y = 0xFFFF;
+            }
+            LOG_DBG("BTN_TOUCH -> %u", on);
+            k_mutex_unlock(&data->lock);
+
+            if (!on) trigger_gesture(dev);
+            return cfg->suppress_key ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        }
+        return cfg->suppress_key ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
     }
-    return (event->type == INPUT_EV_KEY && cfg->suppress_key) ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int input_processor_grid_init(const struct device *dev) {
     struct grid_processor_data *data = dev->data;
     const struct grid_processor_config *cfg = dev->config;
-    if (cfg->cell_count != (cfg->rows * cfg->cols)) return -EINVAL;
-    if (cfg->x_max <= cfg->x_min || cfg->y_max <= cfg->y_min) return -EINVAL;
-    if (cfg->rows == 0 || cfg->cols == 0) return -EINVAL;
+
+    if (cfg->rows == 0 || cfg->columns == 0 || cfg->x == 0 || cfg->y == 0) {
+        LOG_ERR("Invalid config: dimensions and ranges must be > 0");
+        return -EINVAL;
+    }
+
+    if (cfg->cell_count != (cfg->rows * (size_t)cfg->columns)) {
+        LOG_ERR("Cell count mismatch: rows=%u columns=%u bindings=%u", cfg->rows, cfg->columns, (uint32_t)cfg->cell_count);
+        return -EINVAL;
+    }
 
     k_mutex_init(&data->lock);
     data->config = cfg;
     data->start_x = data->start_y = 0xFFFF;
-    data->is_touching = false;
-    LOG_INF("zip_matrix ready: %ux%u", cfg->rows, cfg->cols);
+    data->last_x = data->last_y = 0xFFFF;
+    data->session_active = false;
+    data->is_btn_touch = false;
+
+    LOG_INF("zip_matrix ready: %ux%u grid", cfg->rows, cfg->columns);
     return 0;
 }
 
@@ -146,11 +181,10 @@ static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
     static struct grid_processor_data processor_grid_data_##n = {}; \
     static const struct grid_cell_config processor_grid_cells_##n[] = { DT_INST_FOREACH_CHILD(n, GRID_CELL_CONFIG) }; \
     static const struct grid_processor_config processor_grid_config_##n = { \
-        .rows = DT_INST_PROP(n, rows), .cols = DT_INST_PROP(n, cols), \
-        .x_min = DT_INST_PROP(n, x_min), .x_max = DT_INST_PROP(n, x_max), \
-        .y_min = DT_INST_PROP(n, y_min), .y_max = DT_INST_PROP(n, y_max), \
-        .flick_threshold = DT_INST_PROP(n, flick_threshold), \
-        .suppress_pointer = DT_INST_PROP(n, suppress_pointer), .suppress_key = DT_INST_PROP(n, suppress_key), \
+        .rows = DT_INST_PROP(n, rows), .columns = DT_INST_PROP(n, columns), \
+        .x = DT_INST_PROP(n, x), .y = DT_INST_PROP(n, y), \
+        .threshold = DT_INST_PROP(n, threshold), \
+        .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_key = DT_INST_PROP(n, suppress_key), \
         .cells = processor_grid_cells_##n, .cell_count = ARRAY_SIZE(processor_grid_cells_##n), \
     }; \
     DEVICE_DT_INST_DEFINE(n, input_processor_grid_init, NULL, \
