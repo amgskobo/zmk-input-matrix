@@ -9,13 +9,9 @@
         #input-processor-cells = <0>;
 
         rows = <1>;
-        cols = <1>;
-        flick-threshold = <300>;
-        x-min = <0>;
-        x-max = <1024>;
-        y-min = <0>;
-        y-max = <1024>;
-        // suppress-pointer;  /* Consume ABS events (disable cursor movement) */
-        // suppress-key;      /* Consume KEY events (disable BTN_TOUCH clicks) */
+        columns = <1>;
+        threshold = <50>;
+        x = <1024>;
+        y = <1024>;
     };
 };
