@@ -9,7 +9,7 @@ properties:
     type: int
     required: true
     description: Number of rows in the grid.
-  columns:
+  cols:
     type: int
     required: true
     description: Number of columns in the grid.
@@ -21,7 +21,7 @@ properties:
     type: int
     required: true
     description: Maximum Y coordinate (range is 0 to y).
-  threshold:
+  flick-threshold:
     type: int
     required: true
     description: Minimum pixels to register a flick.
