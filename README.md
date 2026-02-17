@@ -11,7 +11,7 @@ This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y
 - **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
 - **Optimized Calculation**: No movement-time overhead; coordinate-to-cell math is performed exactly once upon gesture completion.
 - **5 Gestures per Cell**: Tap, Up, Down, Left, Right.
-- **Concise Parameters**: Required `x`, `y`, and `threshold` for unambiguous configuration.
+- **Concise Parameters**: Required `x`, `y`, `rows`, `cols`, and `flick-threshold` for unambiguous configuration.
 
 ## Installation
 
@@ -35,13 +35,13 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 /* Define the processor */
 &zip_matrix {
     rows = <4>;
-    columns = <3>;
-    threshold = <50>;
+    cols = <3>;
+    flick-threshold = <50>;
     x = <4095>;
     y = <4095>;
 
     /* 
-     * Standard 12-Key T9 Layout (4 Rows x 3 Columns)
+     * Standard 12-Key T9 Layout (4 Rows x 3 Cols)
      * [00] [01] [02]
      * [03] [04] [05]
      * [06] [07] [08]
@@ -68,8 +68,8 @@ In your `*.overlay` (or keymap), define the processor and assign it to your inpu
 | Property | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `rows` | `int` | **Required** | Number of rows in the grid. |
-| `columns` | `int` | **Required** | Number of columns in the grid. |
-| `threshold` | `int` | **Required** | Min pixels for a flick vs tap. |
+| `cols` | `int` | **Required** | Number of columns in the grid. |
+| `flick-threshold` | `int` | **Required** | Min pixels for a flick vs tap. |
 | `x` | `int` | **Required** | Maximum X coordinate (range is 0 to x). |
 | `y` | `int` | **Required** | Maximum Y coordinate (range is 0 to y). |
 | `suppress-abs` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |

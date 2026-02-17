@@ -27,8 +27,8 @@ LOG_MODULE_REGISTER(zmk_input_processor_matrix, CONFIG_ZMK_LOG_LEVEL);
 struct grid_cell_config { struct zmk_behavior_binding bindings[5]; };
 
 struct grid_processor_config {
-    uint8_t rows, columns;
-    uint16_t x, y, threshold;
+    uint8_t rows, cols;
+    uint16_t x, y, flick_threshold;
     bool suppress_abs, suppress_key;
     const struct grid_cell_config *cells;
     size_t cell_count;
@@ -50,10 +50,10 @@ static uint8_t get_grid_cell(const struct grid_processor_config *cfg, uint16_t x
     uint32_t max_x = MAX(1, cfg->x);
     uint32_t max_y = MAX(1, cfg->y);
     
-    uint8_t col = MIN(cfg->columns - 1, (uint8_t)((pos_x * cfg->columns) / max_x));
+    uint8_t col = MIN(cfg->cols - 1, (uint8_t)((pos_x * cfg->cols) / max_x));
     uint8_t row = MIN(cfg->rows - 1, (uint8_t)((pos_y * cfg->rows) / max_y));
     
-    return (row * cfg->columns) + col;
+    return (row * cfg->cols) + col;
 }
 
 static void trigger_gesture(const struct device *dev) {
@@ -78,7 +78,7 @@ static void trigger_gesture(const struct device *dev) {
     uint32_t abs_delta_y = (uint32_t)(delta_y < 0 ? -delta_y : delta_y);
 
     /* 0:Tap, 1:Up, 2:Down, 3:Left, 4:Right */
-    uint8_t gesture = (abs_delta_x < cfg->threshold && abs_delta_y < cfg->threshold) ? 0 :
+    uint8_t gesture = (abs_delta_x < cfg->flick_threshold && abs_delta_y < cfg->flick_threshold) ? 0 :
                       (abs_delta_y > abs_delta_x) ? (delta_y < 0 ? 1 : 2) : (delta_x < 0 ? 3 : 4);
     uint8_t cell = get_grid_cell(cfg, start_x, start_y);
 
@@ -144,13 +144,13 @@ static int input_processor_grid_init(const struct device *dev) {
     struct grid_processor_data *data = dev->data;
     const struct grid_processor_config *cfg = dev->config;
 
-    if (cfg->rows == 0 || cfg->columns == 0 || cfg->x == 0 || cfg->y == 0) {
+    if (cfg->rows == 0 || cfg->cols == 0 || cfg->x == 0 || cfg->y == 0) {
         LOG_ERR("Invalid config: dimensions and ranges must be > 0");
         return -EINVAL;
     }
 
-    if (cfg->cell_count != (cfg->rows * (size_t)cfg->columns)) {
-        LOG_ERR("Cell count mismatch: rows=%u columns=%u bindings=%u", cfg->rows, cfg->columns, (uint32_t)cfg->cell_count);
+    if (cfg->cell_count != (cfg->rows * (size_t)cfg->cols)) {
+        LOG_ERR("Cell count mismatch: rows=%u cols=%u bindings=%u", cfg->rows, cfg->cols, (uint32_t)cfg->cell_count);
         return -EINVAL;
     }
 
@@ -161,7 +161,7 @@ static int input_processor_grid_init(const struct device *dev) {
     data->session_active = false;
     data->is_btn_touch = false;
 
-    LOG_INF("zip_matrix ready: %ux%u grid", cfg->rows, cfg->columns);
+    LOG_INF("zip_matrix ready: %ux%u grid", cfg->rows, cfg->cols);
     return 0;
 }
 
@@ -181,9 +181,9 @@ static const struct zmk_input_processor_driver_api grid_processor_driver_api = {
     static struct grid_processor_data processor_grid_data_##n = {}; \
     static const struct grid_cell_config processor_grid_cells_##n[] = { DT_INST_FOREACH_CHILD(n, GRID_CELL_CONFIG) }; \
     static const struct grid_processor_config processor_grid_config_##n = { \
-        .rows = DT_INST_PROP(n, rows), .columns = DT_INST_PROP(n, columns), \
+        .rows = DT_INST_PROP(n, rows), .cols = DT_INST_PROP(n, cols), \
         .x = DT_INST_PROP(n, x), .y = DT_INST_PROP(n, y), \
-        .threshold = DT_INST_PROP(n, threshold), \
+        .flick_threshold = DT_INST_PROP(n, flick_threshold), \
         .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_key = DT_INST_PROP(n, suppress_key), \
         .cells = processor_grid_cells_##n, .cell_count = ARRAY_SIZE(processor_grid_cells_##n), \
     }; \
