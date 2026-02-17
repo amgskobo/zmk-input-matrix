@@ -8,6 +8,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/input/input.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <drivers/input_processor.h>
@@ -37,10 +38,28 @@ struct grid_processor_config {
 struct grid_processor_data {
     struct k_mutex lock;
     const struct grid_processor_config *config;
-    uint16_t start_x, start_y, last_x, last_y;
+    struct {
+        uint16_t start_x, start_y;
+        uint16_t last_x, last_y;
+    } coords;
     bool session_active;  /* Synchronized X and Y received within current touch window */
     bool is_btn_touch;    /* Physical BTN_TOUCH state (ON/OFF) */
 };
+
+static void update_coordinates(struct grid_processor_data *data, uint16_t code, int32_t value) {
+    uint16_t *start_ptr = (code == INPUT_ABS_X) ? &data->coords.start_x : &data->coords.start_y;
+    uint16_t *last_ptr = (code == INPUT_ABS_X) ? &data->coords.last_x : &data->coords.last_y;
+
+    if (*start_ptr == 0xFFFF) {
+        *start_ptr = (uint16_t)value;
+    }
+    *last_ptr = (uint16_t)value;
+
+    if (!data->session_active && data->coords.start_x != 0xFFFF && data->coords.start_y != 0xFFFF) {
+        data->session_active = true;
+        LOG_DBG("Session active: initial coords set (%u, %u)", data->coords.start_x, data->coords.start_y);
+    }
+}
 
 static uint8_t get_grid_cell(const struct grid_processor_config *cfg, uint16_t x, uint16_t y) {
     uint32_t pos_x = CLAMP(x, 0, cfg->x);
@@ -62,8 +81,8 @@ static void trigger_gesture(const struct device *dev) {
 
     k_mutex_lock(&data->lock, K_FOREVER);
     bool active = data->session_active;
-    uint16_t start_x = data->start_x, start_y = data->start_y;
-    uint16_t end_x = data->last_x, end_y = data->last_y;
+    uint16_t start_x = data->coords.start_x, start_y = data->coords.start_y;
+    uint16_t end_x = data->coords.last_x, end_y = data->coords.last_y;
     data->session_active = false;
     k_mutex_unlock(&data->lock);
 
@@ -103,32 +122,23 @@ static int input_processor_grid_handle_event(const struct device *dev, struct in
         
         k_mutex_lock(&data->lock, K_FOREVER);
         if (data->is_btn_touch) {
-            uint16_t *start_ptr = (event->code == INPUT_ABS_X) ? &data->start_x : &data->start_y;
-            uint16_t *last_ptr = (event->code == INPUT_ABS_X) ? &data->last_x : &data->last_y;
-            
-            if (*start_ptr == 0xFFFF) *start_ptr = (uint16_t)event->value;
-            *last_ptr = (uint16_t)event->value;
-
-            if (!data->session_active && data->start_x != 0xFFFF && data->start_y != 0xFFFF) {
-                data->session_active = true;
-                LOG_DBG("Session active: initial coords set (%u, %u)", data->start_x, data->start_y);
-            }
+            update_coordinates(data, event->code, event->value);
         }
         k_mutex_unlock(&data->lock);
         return cfg->suppress_abs ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
 
     case INPUT_EV_KEY:
-        if (event->code == BTN_TOUCH) {
+        if (event->code == INPUT_BTN_TOUCH) {
             bool on = (event->value != 0);
             k_mutex_lock(&data->lock, K_FOREVER);
             data->is_btn_touch = on;
             if (on) {
                 /* Start of touch (ON): clear all coordinate state */
                 data->session_active = false;
-                data->start_x = data->start_y = 0xFFFF;
-                data->last_x = data->last_y = 0xFFFF;
+                data->coords.start_x = data->coords.start_y = 0xFFFF;
+                data->coords.last_x = data->coords.last_y = 0xFFFF;
             }
-            LOG_DBG("BTN_TOUCH -> %u", on);
+            LOG_DBG("INPUT_BTN_TOUCH -> %u", on);
             k_mutex_unlock(&data->lock);
 
             if (!on) trigger_gesture(dev);
@@ -156,8 +166,8 @@ static int input_processor_grid_init(const struct device *dev) {
 
     k_mutex_init(&data->lock);
     data->config = cfg;
-    data->start_x = data->start_y = 0xFFFF;
-    data->last_x = data->last_y = 0xFFFF;
+    data->coords.start_x = data->coords.start_y = 0xFFFF;
+    data->coords.last_x = data->coords.last_y = 0xFFFF;
     data->session_active = false;
     data->is_btn_touch = false;
 
