@@ -1,0 +1,33 @@
+/*
+ * Copyright (c) 2025 The ZMK Contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+/ {
+    /*
+     * Default KSCAN matrix proxy for gesture reporting.
+     * This device acts as a buffer between the input processor and keymap.
+     */
+    kscan_gesture: kscan_gesture {
+        compatible = "zmk,kscan-input-matrix";
+        #kscan-cells = <2>;
+        rows = <5>;      /* Default: 1x1 grid (5 gestures) */
+        columns = <1>;
+    };
+
+    /*
+     * Default ZIP Matrix input processor.
+     * Maps trackpad coordinates to the kscan_gesture proxy.
+     */
+    zip_matrix: zip_matrix {
+        compatible = "zmk,input-processor-matrix";
+        #input-processor-cells = <0>;
+        rows = <1>;      /* Default: 1x1 grid */
+        columns = <1>;
+        x = <1024>;      /* Default resolution */
+        y = <1024>;
+        flick-threshold = <50>;
+        long-press-ms = <300>;
+        kscan = <&kscan_gesture>;
+    };
+};
