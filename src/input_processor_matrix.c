@@ -166,6 +166,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
     const struct zip_matrix_config *cfg = data->config;
     k_spinlock_key_t key;
     int ret = ZMK_INPUT_PROC_CONTINUE;
+    bool is_sync = event->sync;
 
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
@@ -178,7 +179,6 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
         }
 
         key = k_spin_lock(&data->lock);
-        /* X and Y can arrive as separate events, so keep the latest pair in shared state. */
         if (event->code == INPUT_ABS_X) {
             data->current_x = event->value;
         }
@@ -187,11 +187,9 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
         }
 
         if (data->is_btn_touch && !data->sync_start_pending) {
-            /* Once touch start is latched, ABS updates track the tail of the gesture. */
             data->last_x = data->current_x;
             data->last_y = data->current_y;
 
-            /* Cancel hold timer if movement exceeds threshold */
             if (data->start_x != COORD_UNINITIALIZED && data->start_y != COORD_UNINITIALIZED) {
                 int32_t dx = (int32_t)data->current_x - (int32_t)data->start_x;
                 int32_t dy = (int32_t)data->current_y - (int32_t)data->start_y;
@@ -219,19 +217,11 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
             k_spinlock_key_t lock_key = k_spin_lock(&data->lock);
 
             if (on) {
-                /*
-                 * BTN_TOUCH can arrive before the matching ABS pair is complete.
-                 * Delay latching start_x/start_y until the next synced report.
-                 */
                 data->is_btn_touch = true;
                 data->sync_start_pending = true;
                 data->is_holding = false;
                 k_spin_unlock(&data->lock, lock_key);
             } else {
-                /*
-                 * Take a snapshot under lock, then emit outside the lock.
-                 * That avoids holding the spinlock across KSCAN callbacks.
-                 */
                 data->is_btn_touch = false;
                 data->sync_start_pending = false;
 
@@ -249,12 +239,10 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 k_spin_unlock(&data->lock, lock_key);
 
                 if (snap_holding) {
-                    /* A long-press already emitted its press event, so release only. */
                     zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)snap_row,
                                                   (uint32_t)snap_column, false);
                     LOG_DBG("Hold released (Row %u, Column %u)", snap_row, snap_column);
                 } else {
-                    /* Short touch or flick: classify now and emit a press+release pair. */
                     process_gesture(data->kscan_dev, cfg, snap_start_x, snap_start_y, snap_last_x,
                                     snap_last_y);
                 }
@@ -268,7 +256,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
         break;
     }
 
-    if (event->sync) {
+    if (is_sync) {
         key = k_spin_lock(&data->lock);
         /*
          * Use the first synced ABS frame after BTN_TOUCH as the canonical touch-start point.
