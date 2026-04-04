@@ -19,6 +19,7 @@
 LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
 
 #define COORD_UNINITIALIZED UINT16_MAX
+#define COORD_INVALID_ZERO  0xFFF
 
 /**
  * Gesture Enumeration
@@ -205,7 +206,11 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
         }
         k_spin_unlock(&data->lock, key);
 
-        ret = cfg->suppress_abs ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        if (cfg->suppress_abs) {
+            event->code = COORD_INVALID_ZERO;
+            event->sync = false;
+            ret = ZMK_INPUT_PROC_STOP;
+        }
         break;
 
     case INPUT_EV_KEY:
@@ -255,7 +260,11 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 }
             }
         }
-        ret = cfg->suppress_key ? ZMK_INPUT_PROC_STOP : ZMK_INPUT_PROC_CONTINUE;
+        if (cfg->suppress_key) {
+            event->code = COORD_INVALID_ZERO;
+            event->sync = false;
+            ret = ZMK_INPUT_PROC_STOP;
+        }
         break;
     }
 
