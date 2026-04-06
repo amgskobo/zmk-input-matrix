@@ -217,9 +217,16 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
             k_spinlock_key_t lock_key = k_spin_lock(&data->lock);
 
             if (on) {
+                k_work_cancel_delayable(&data->hold_work);
                 data->is_btn_touch = true;
                 data->sync_start_pending = true;
                 data->is_holding = false;
+                data->current_x = COORD_UNINITIALIZED;
+                data->current_y = COORD_UNINITIALIZED;
+                data->start_x   = COORD_UNINITIALIZED;
+                data->start_y   = COORD_UNINITIALIZED;
+                data->last_x    = COORD_UNINITIALIZED;
+                data->last_y    = COORD_UNINITIALIZED;
                 k_spin_unlock(&data->lock, lock_key);
             } else {
                 data->is_btn_touch = false;
