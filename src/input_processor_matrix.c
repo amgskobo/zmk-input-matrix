@@ -119,12 +119,15 @@ static void hold_work_handler(struct k_work *work) {
 
         data->is_holding = true;
         trigger = true;
+    } else {
+        LOG_WRN("hold_work: SKIPPED (touch=%d holding=%d start=%u,%u)",
+                data->is_btn_touch, data->is_holding, data->start_x, data->start_y);
     }
     k_spin_unlock(&data->lock, key);
 
     if (trigger) {
         zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)data->hold_row, (uint32_t)data->hold_column, true);
-        LOG_DBG("Hold triggered: Row %u, Column %u", data->hold_row, data->hold_column);
+        LOG_INF("HOLD PRESS: Row %u, Column %u", data->hold_row, data->hold_column);
     }
 }
 
@@ -221,13 +224,13 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 data->is_btn_touch = true;
                 data->sync_start_pending = true;
                 data->is_holding = false;
-                data->current_x = COORD_UNINITIALIZED;
-                data->current_y = COORD_UNINITIALIZED;
+                /* Don't reset current_x/y here. The driver might omit reports if position hasn't changed. */
                 data->start_x   = COORD_UNINITIALIZED;
                 data->start_y   = COORD_UNINITIALIZED;
                 data->last_x    = COORD_UNINITIALIZED;
                 data->last_y    = COORD_UNINITIALIZED;
                 k_spin_unlock(&data->lock, lock_key);
+                LOG_INF("TOUCH ON");
             } else {
                 data->is_btn_touch = false;
                 data->sync_start_pending = false;
@@ -248,8 +251,10 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 if (snap_holding) {
                     zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)snap_row,
                                                   (uint32_t)snap_column, false);
-                    LOG_DBG("Hold released (Row %u, Column %u)", snap_row, snap_column);
+                    LOG_INF("HOLD RELEASE: Row %u, Column %u", snap_row, snap_column);
                 } else {
+                    LOG_INF("TOUCH OFF -> gesture (start=%u,%u last=%u,%u)",
+                            snap_start_x, snap_start_y, snap_last_x, snap_last_y);
                     process_gesture(data->kscan_dev, cfg, snap_start_x, snap_start_y, snap_last_x,
                                     snap_last_y);
                 }
@@ -278,9 +283,13 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
             data->sync_start_pending = false;
 
             if (cfg->long_press_ms > 0) {
-                /* The hold timer starts only after touch-start coordinates are stable. */
                 k_work_reschedule(&data->hold_work, K_MSEC(cfg->long_press_ms));
+                LOG_INF("SYN: start=(%u,%u) hold_work scheduled %ums",
+                        data->start_x, data->start_y, cfg->long_press_ms);
             }
+        } else if (data->sync_start_pending) {
+            LOG_WRN("SYN skipped: pending=%d x=%u y=%u", 
+                    data->sync_start_pending, data->current_x, data->current_y);
         }
         k_spin_unlock(&data->lock, key);
     }
