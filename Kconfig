@@ -2,7 +2,32 @@
 # SPDX-License-Identifier: MIT
 
 DT_COMPAT_ZMK_INPUT_PROCESSOR_MATRIX := zmk,input-processor-matrix
+DT_COMPAT_ZMK_KSCAN_INPUT_MATRIX := zmk,kscan-input-matrix
 
 config ZMK_INPUT_PROCESSOR_MATRIX
-    bool
+    bool "Input Processor Matrix"
     default $(dt_compat_enabled,$(DT_COMPAT_ZMK_INPUT_PROCESSOR_MATRIX))
+    depends on (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
+    help
+      Enable the ZMK Input Processor Matrix (ZIP Matrix).
+      This processor converts absolute trackpad coordinates into virtual key
+      events based on gestures (Tap, Flick Up/Down/Left/Right).
+
+config ZMK_KSCAN_INPUT_MATRIX
+    bool "KSCAN Input Matrix Proxy"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZMK_KSCAN_INPUT_MATRIX))
+    select KSCAN
+    help
+      Enable the KSCAN proxy driver for the Input Processor Matrix.
+      This virtual KSCAN device receives events from the ZIP Matrix processor
+      and reports them as standard matrix events.
+
+if ZMK_KSCAN_INPUT_MATRIX
+
+config ZMK_KSCAN_INPUT_MATRIX_INIT_PRIORITY
+    int "Init Priority"
+    default 40
+    help
+      Initialization priority for the KSCAN input matrix driver.
+
+endif

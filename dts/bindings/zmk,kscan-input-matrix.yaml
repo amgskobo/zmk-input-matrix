@@ -1,0 +1,45 @@
+description: |
+  ZMK KSCAN Input Matrix (Gesture Matrix Buffer)
+
+  A virtual KSCAN device that reports trackpad gesture events as standard
+  matrix key presses. The matrix is dynamically sized based on the linked
+  input processor configuration:
+
+    Total rows    = 5 * grid_rows  (Tap, Up, Down, Left, Right blocks)
+    Total columns = grid_columns
+
+  Each gesture type occupies a contiguous block of `grid_rows` rows,
+  preserving the physical grid shape within each block for intuitive
+  ZMK Studio configuration.
+
+  Example (3x3 Grid):
+    Rows 0-2:   Tap block     (3x3 zones)
+    Rows 3-5:   Up block      (3x3 zones)
+    Rows 6-8:   Down block    (3x3 zones)
+    Rows 9-11:  Left block    (3x3 zones)
+    Rows 12-14: Right block   (3x3 zones)
+
+compatible: "zmk,kscan-input-matrix"
+
+include: kscan.yaml
+
+properties:
+  "#kscan-cells":
+    type: int
+    const: 2
+    description: |
+      Standard KSCAN cell specifier. Always 2 for (row, column) matrix addressing.
+  rows:
+    type: int
+    required: false
+    default: 5
+    description: |
+      Total number of rows in the virtual matrix.
+      When used with input_processor, this must match (5 * grid_rows).
+  columns:
+    type: int
+    required: false
+    default: 1
+    description: |
+      Number of columns in the virtual matrix.
+      When used with input_processor, this must match (grid_columns).

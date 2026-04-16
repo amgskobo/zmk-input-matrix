@@ -1,4 +1,4 @@
-description: ZMK Input Processor - Grid & Flick Behavior Trigger
+description: ZMK Input Processor - Gesture Grid & Flick Recognition
 
 compatible: "zmk,input-processor-matrix"
 
@@ -8,34 +8,44 @@ properties:
   rows:
     type: int
     required: true
-    description: Number of rows in the grid.
-  cols:
+    description: Number of rows in the gesture grid.
+  columns:
     type: int
     required: true
-    description: Number of columns in the grid.
+    description: Number of columns in the gesture grid.
   x:
     type: int
     required: true
-    description: Maximum X coordinate (range is 0 to x).
+    description: Maximum X coordinate resolution (range is 0 to x).
   y:
     type: int
     required: true
-    description: Maximum Y coordinate (range is 0 to y).
+    description: Maximum Y coordinate resolution (range is 0 to y).
   flick-threshold:
     type: int
     required: true
-    description: Minimum pixels to register a flick.
+    description: Minimum displacement in pixels to register a flick gesture.
   suppress-abs:
     type: boolean
-    description: Consume ABS pointer events (X/Y coordinates).
+    description: |
+      If true, consume ABS pointer events (X/Y coordinates) to prevent
+      them from reaching other processors or the mouse HID.
   suppress-key:
     type: boolean
-    description: Consume KEY events (BTN_TOUCH, BTN_0, etc.).
-
-child-binding:
-  description: Grid Cell Configuration
-  properties:
-    bindings:
-      type: phandle-array
-      required: true
-      description: Array of 5 behaviors (Tap, Up, Down, Left, Right).
+    description: |
+      If true, consume KEY events (BTN_TOUCH, etc.) to prevent them from
+      reaching other processors or behaviors.
+  kscan:
+    type: phandle
+    required: true
+    description: Phandle to the zmk,kscan-input-matrix proxy device to report gesture events.
+  long-press-ms:
+    type: int
+    required: false
+    default: 200
+    description: |
+      Milliseconds after BTN_TOUCH before the kscan cell is pressed (HOLD).
+      At the timeout, displacement accumulated so far selects the gesture block
+      (tap / up / down / left / right) to press.
+      The cell stays pressed until BTN_TOUCH is released.
+      Set to 0 to disable hold-press and use tap-only (press+immediate release).

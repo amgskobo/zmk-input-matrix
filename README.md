@@ -1,111 +1,160 @@
 # ZMK Input Matrix (zip_matrix)
 
-This module implements a ZMK Input Processor that turns a trackpad (Absolute X/Y) into a configurable 4-way flick grid trigger.
+A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a configurable gesture grid with long-press support. Gestures are reported as standard KSCAN matrix events for full ZMK Studio compatibility.
 
 ## Features
 
-- **Dynamic Grid**: Configure any size grid (e.g., 1x1, 2x2, 3x3, 4x3).
-- **BTN_TOUCH Driven Triggering**: Responds immediately to standard `BTN_TOUCH` key events. Accurately captures the full touch-to-release lifecycle.
-- **Precision Session Sync**: Waits for both X and Y axes to report initial coordinates *after* `BTN_TOUCH` goes high, preventing false triggers.
-- **Flexible Event Filtering**: Independently suppress ABS (pointer) and KEY (button) events with `suppress-abs` and `suppress-key` properties.
-- **Asynchronous Execution**: Uses ZMK's behavior queue for sequenced bindings (e.g., complex macros) without blocking input.
-- **Optimized Calculation**: No movement-time overhead; coordinate-to-cell math is performed exactly once upon gesture completion.
-- **5 Gestures per Cell**: Tap, Up, Down, Left, Right.
-- **Concise Parameters**: Required `x`, `y`, `rows`, `cols`, and `flick-threshold` for unambiguous configuration.
+- **Dynamic Grid**: Configure any grid size (e.g., 1x1, 2x2, 3x3)
+- **Block Layout**: Each gesture (Tap/Up/Down/Left/Right) gets a full block stacked vertically
+- **SYN-Based Latching**: Coordinates are latched on `INPUT_SYN_REPORT` for stable start positions
+- **Long-Press Support**: Configurable hold duration (set `0` to disable)
+- **Split Keyboard Ready**: Optimized for central-side processing
+- **Thread-Safe**: Uses spinlocks to prevent race conditions
 
 ## Installation
 
-Add this module to your `west.yml` or copy it to your ZMK config.
+Add this module to your project's `config/west.yml` file.
 
-## Usage
-
-### 1. include input_matrix.dtsi
-
-```dts
-#include <input_matrix.dtsi>
+```yaml
+manifest:
+  remotes:
+    - name: amgskobo
+      url-base: https://github.com/amgskobo
+  projects:
+    - name: zmk-input-matrix
+      remote: amgskobo
+      revision: main
 ```
 
-### 2. Configure Overlay
+## Quick Start
 
-In your `*.overlay` (or keymap), define the processor and assign it to your input listener (`trackpad_listener` or similar).
+### 1. DTS Include
 
-#### Example: 4x3 Grid (Standard T9 Layout)
+Include the standard helper in your shield's `.overlay` or `.zmk.dts`:
 
 ```dts
-/* Define the processor */
-&zip_matrix {
-    rows = <4>;
-    cols = <3>;
-    flick-threshold = <50>;
-    x = <4095>;
-    y = <4095>;
+#include <zmk-input-matrix/input_matrix.dtsi>
+```
 
-    /* 
-     * Standard 12-Key T9 Layout (4 Rows x 3 Cols)
-     * [00] [01] [02]
-     * [03] [04] [05]
-     * [06] [07] [08]
-     * [09] [10] [11]
-     */
+### 2. Configuration Example (3x3 Grid)
 
-    cell_00 { bindings = <&kp N1 &kp UP &kp DOWN &kp LEFT &kp RIGHT>; };
-    cell_01 { bindings = <&kp A  &kp C  &kp N2   &kp B    &kp A>; };    /* Tap=A, Up=C, Down=N2, Left=B, Right=A */
-    cell_02 { bindings = <&kp D  &kp F  &kp N3   &kp E    &kp D>; };
-    
-    /* ... and so on */
+This example creates a **15 row × 3 column** matrix (5 gesture blocks × 3 zones):
+
+**Note**: Enabling the compatible in DeviceTree automatically enables both `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` and `CONFIG_ZMK_KSCAN_INPUT_MATRIX` via Kconfig defaults.
+
+```dts
+/* Set kscan_gesture rows/columns to match your grid */
+&kscan_gesture {
+    rows = <15>;    /* 5 gestures * 3 grid rows */
+    columns = <3>;
 };
 
-/* Assign to Listener */
+/* Configure the gesture grid */
+&zip_matrix {
+    rows = <3>;
+    columns = <3>;
+    flick-threshold = <50>;
+    x = <1024>;
+    y = <1024>;
+    long-press-ms = <300>;
+};
+
+/* Add zip_matrix to your trackpad pipeline */
 &trackpad_listener {
     input-processors = <&zip_matrix>;
 };
 ```
 
-## Configuration Reference
+#### Matrix Mapping
 
-### Processor Properties
+| Row Range | Gesture |
+|:---------:|:-------:|
+| 0 - 2 | Tap |
+| 3 - 5 | Up |
+| 6 - 8 | Down |
+| 9 - 11 | Left |
+| 12 - 14 | Right |
+
+### 3. Keymap Configuration
+
+The `kscan_gesture` device acts as a standard 15x3 matrix. You can define keys for each gesture zone in your keymap:
+
+```dts
+/* In your .keymap file */
+default_layer {
+    bindings = <
+        /* Row 0: Tap */
+        &kp A &kp B &kp C
+        /* Row 1: Tap */
+        &kp D &kp E &kp F
+        /* Row 2: Tap */
+        &kp G &kp H &kp I
+
+        /* Row 3: Up */
+        &kp UP &kp UP &kp UP
+        /* Row 4: Up */
+        &kp UP &kp UP &kp UP
+        /* Row 5: Up */
+        &kp UP &kp UP &kp UP
+
+        /* Row 6: Down */
+        &kp DOWN &kp DOWN &kp DOWN
+        /* Row 7: Down */
+        &kp DOWN &kp DOWN &kp DOWN
+        /* Row 8: Down */
+        &kp DOWN &kp DOWN &kp DOWN
+
+        /* Row 9: Left */
+        &kp LEFT &kp LEFT &kp LEFT
+        /* Row 10: Left */
+        &kp LEFT &kp LEFT &kp LEFT
+        /* Row 11: Left */
+        &kp LEFT &kp LEFT &kp LEFT
+
+        /* Row 12: Right */
+        &kp RIGHT &kp RIGHT &kp RIGHT
+        /* Row 13: Right */
+        &kp RIGHT &kp RIGHT &kp RIGHT
+        /* Row 14: Right */
+        &kp RIGHT &kp RIGHT &kp RIGHT
+    >;
+};
+```
+
+### 4. Physical Layout (ZMK Studio)
+
+To visualize the gesture grid with separated blocks in ZMK Studio, use [keymap-drawer](https://github.com/caksoylar/keymap-drawer) to generate the `keys` array:
+
+```bash
+# Generate keys for a 15x3 grid with gaps
+python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+333"
+```
+
+Or use the [ZMK Physical Layout Converter](https://zmk-physical-layout-converter.streamlit.app/) web tool.
+
+**Tip**: After generating, assign the layout to your kscan device:
+
+```dts
+&kscan_gesture {
+    physical-layout = <&gesture_layout>;
+};
+```
+
+See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) documentation for details.
+
+## Configuration Reference
 
 | Property | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `rows` | `int` | **Required** | Number of rows in the grid. |
-| `cols` | `int` | **Required** | Number of columns in the grid. |
-| `flick-threshold` | `int` | **Required** | Min pixels for a flick vs tap. |
-| `x` | `int` | **Required** | Maximum X coordinate (range is 0 to x). |
-| `y` | `int` | **Required** | Maximum Y coordinate (range is 0 to y). |
-| `suppress-abs` | `bool` | `false` | If `true`, stops ABS event propagation (disables cursor movement). |
-| `suppress-key` | `bool` | `false` | If `true`, stops KEY event propagation (disables physical clicks). |
+| `rows` | int | Required | Grid rows |
+| `columns` | int | Required | Grid columns |
+| `x` | int | Required | Max X coordinate resolution |
+| `y` | int | Required | Max Y coordinate resolution |
+| `flick-threshold` | int | Required | Minimum pixels for flick displacement |
+| `long-press-ms` | int | 300 | Hold time (ms), 0 to disable |
+| `suppress-abs` | bool | false | Consume ABS pointer events |
+| `suppress-key` | bool | false | Consume KEY events (touch) |
 
-### Child Nodes & Grid Mapping
+## License
 
-The driver maps child nodes to grid cells in **Row-Major Order** (Left-to-Right, Top-to-Bottom).
-
-#### Mapping Logic
-
-1. **Ordering**: The driver processes child nodes in **Definition Order** (the order they appear in your Devicetree file).
-2. **Indexing**: Nodes are assigned to grid cells starting from index 0.
-    - `Index = (Row * Total_Cols) + Col`
-
-**Important**: Because grid cells are assigned in the order they are defined, it is recommended to name them sequentially (e.g., `cell_00`, `cell_01`... `cell_11`) to avoid confusion.
-
-#### 5-Way Binding Format
-
-Each child node must have a `bindings` array with exactly 5 entries in this specific order:
-
-1. **Tap** (Center / No Flick)
-2. **Up** (Flick Up)
-3. **Down** (Flick Down)
-4. **Left** (Flick Left)
-5. **Right** (Flick Right)
-
-## Event Flow and Transparency
-
-`zip_matrix` can either "consume" events or let them "pass through" (transparency) to the next processor in the chain.
-
-| Property | Behavior when `true` (Suppressed) | Behavior when `false` (Transparent) |
-| :--- | :--- | :--- |
-| `suppress-abs` | Consumes ABS events. Cursor will **not** move. | Passes ABS events through. Cursor **will** move. |
-| `suppress-key` | Consumes KEY events. BTN_TOUCH etc. will **not** click. | Passes KEY events through. BTN_TOUCH etc. **will** click. |
-
-> [!TIP]
-> To use a trackpad **only** as a macro grid, set both `suppress-abs` and `suppress-key` to `true`.
-> To use it as a mouse **with** gesture capabilities, set them to `false`, and place `zip_matrix` **before** any ABS-to-REL conversion in your `input-processors` list.
+MIT License. See [LICENSE](LICENSE) for details.
