@@ -27,7 +27,7 @@
         x = <1024>;      /* Default resolution */
         y = <1024>;
         flick-threshold = <50>;
-        long-press-ms = <300>;
+        long-press-ms = <200>;
         kscan = <&kscan_gesture>;
     };
 };

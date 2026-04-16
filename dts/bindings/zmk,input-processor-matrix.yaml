@@ -42,7 +42,10 @@ properties:
   long-press-ms:
     type: int
     required: false
-    default: 300
+    default: 200
     description: |
-      Milliseconds to hold before triggering a hold (long-press) event.
-      Set to 0 to disable hold detection and use tap-only behavior.
+      Milliseconds after BTN_TOUCH before the kscan cell is pressed (HOLD).
+      At the timeout, displacement accumulated so far selects the gesture block
+      (tap / up / down / left / right) to press.
+      The cell stays pressed until BTN_TOUCH is released.
+      Set to 0 to disable hold-press and use tap-only (press+immediate release).
