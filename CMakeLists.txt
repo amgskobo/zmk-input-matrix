@@ -1,12 +1,12 @@
 # Copyright (c) 2025 The ZMK Contributors
 # SPDX-License-Identifier: MIT
 
-zephyr_library()
-
-zephyr_library_include_directories(include)
-
-zephyr_library_sources_ifdef(CONFIG_ZMK_INPUT_PROCESSOR_MATRIX src/input_processor_matrix.c)
-zephyr_library_sources_ifdef(CONFIG_ZMK_KSCAN_INPUT_MATRIX src/kscan_input_matrix.c)
+if(CONFIG_ZMK_INPUT_PROCESSOR_MATRIX OR CONFIG_ZMK_KSCAN_INPUT_MATRIX)
+  zephyr_library()
+  zephyr_library_include_directories(include)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_INPUT_PROCESSOR_MATRIX src/input_processor_matrix.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_KSCAN_INPUT_MATRIX src/kscan_input_matrix.c)
+endif()
 
 # Enforce dependency: Input Processor requires KSCAN Proxy
 if(CONFIG_ZMK_INPUT_PROCESSOR_MATRIX)
