@@ -90,6 +90,7 @@ Example for point `(1,1)` on a 3x3 grid:
 
 ```text
 BTN_TOUCH pressed
+  - Treat only the OFF-to-ON transition as a new contact; repeated ON reports do not reset the active contact.
   - Cancel any pending hold work from an old contact.
   - If an old reported hold is still down, release it.
   - Increment contact_id so old hold work cannot clear this new contact.
@@ -139,7 +140,7 @@ Sync while touch is inactive and no contact is active
 - `flick-threshold`: 1 to 65535
 - `long-press-ms`: 0 to 65535
 - The paired KSCAN node must use `rows = 5 * zip_matrix.rows` and matching `columns`.
-- Init priority uses ZMK/Zephyr defaults: the processor uses `CONFIG_KERNEL_INIT_PRIORITY_DEFAULT`, and the KSCAN proxy uses `CONFIG_KSCAN_INIT_PRIORITY`. Reports are ignored until the KSCAN proxy is ready and enabled.
+- Init priority follows KSCAN automatically: the KSCAN proxy uses `CONFIG_KSCAN_INIT_PRIORITY`, and the input processor initializes at `CONFIG_KSCAN_INIT_PRIORITY + 1` via `UTIL_INC()`. Reports are ignored until the KSCAN proxy is ready and enabled.
 
 ## Development Standards
 

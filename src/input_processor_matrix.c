@@ -211,8 +211,9 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
         if (event->code == INPUT_BTN_TOUCH) {
             bool on = (bool)event->value;
             k_spinlock_key_t key = k_spin_lock(&data->lock);
+            bool was_touch = data->is_btn_touch;
 
-            if (on) {
+            if (on && !was_touch) {
                 cancel_hold = true;
                 release_stale_hold = data->is_holding && data->hold_reported;
                 release_row = data->hold_row;
@@ -230,7 +231,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 data->flick_gesture = GESTURE_TAP;
                 data->start_x = COORD_UNINITIALIZED;
                 data->start_y = COORD_UNINITIALIZED;
-            } else {
+            } else if (!on && was_touch) {
                 data->is_btn_touch = false;
             }
 
