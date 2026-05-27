@@ -1,19 +1,19 @@
 # ZMK Input Matrix (zip_matrix)
 
-トラックパッドの絶対座標（X/Y）を、設定可能なジェスチャ・グリッドに変換する ZMK インプット・プロセッサです。長押し（Long-press）に対応し、ジェスチャは標準的な KSCAN マトリックス・イベントとして報告されるため、ZMK Studio との完全な互換性を備えています。
+トラックパッドの絶対座標（X/Y）を、設定可能なジェスチャグリッドに変換する ZMK 入力プロセッサです。長押しに対応し、ジェスチャは標準的な KSCAN マトリクスイベントとして報告されるため、ZMK Studio と完全に互換性があります。
 
 ## 特徴
 
-- **ダイナミック・グリッド**: 任意のグリッドサイズ（1x1, 2x2, 3x3 等）を設定可能
-- **ブロック配置**: 各ジェスチャ（Tap/Up/Down/Left/Right）が独立したブロックとして垂直にスタック
-- **SYNラッチ**: 座標を `INPUT_SYN_REPORT` でラッチし、安定した開始点を確定
-- **長押しサポート**: 設定可能なTapホールド時間（0で無効化可能）
-- **分割キーボード対応**: 中央側（Central）での処理に最適化
-- **スレッドセーフ**: スピンロックの使用により、競合状態を防止
+- **可変グリッド**: 任意のグリッドサイズ（1×1, 2×2, 3×3 等）を設定可能
+- **ブロック配置**: 各ジェスチャ（Tap / Up / Down / Left / Right）が独立したブロックとして垂直に積層
+- **SYN ラッチ**: 座標を `INPUT_SYN_REPORT` でラッチし、安定した開始点を確定
+- **長押し対応**: Tap ホールド時間を設定可能（0 で無効化）
+- **分割キーボード対応**: セントラル側での処理に最適化
+- **スレッドセーフ**: スピンロックにより競合状態を防止
 
 ## インストール
 
-ZMK 設定の `config/west.yml` にこのプロジェクトを追加してください。
+ZMK の設定ファイル `config/west.yml` に本プロジェクトを追加してください。
 
 ```yaml
 manifest:
@@ -30,7 +30,7 @@ manifest:
 
 ### 1. DTS のインクルード
 
-シールドの `.overlay` または `.zmk.dts` で標準ヘルパーをインクルードしてください。
+シールドの `.overlay` または `.zmk.dts` で標準ヘッダーをインクルードしてください。
 
 ```dts
 #include <zmk-input-matrix/input_matrix.dtsi>
@@ -38,14 +38,14 @@ manifest:
 
 ### 2. 設定例 (3x3 グリッド)
 
-この例では **15行 × 3列** のマトリックスを作成します（5つのジェスチャブロック × 3つのゾーン）:
+この例では **15 行 × 3 列** のマトリクスを作成します（5 ジェスチャブロック × 3 ゾーン）:
 
-**注意**: `CONFIG_ZMK_POINTING` が有効な構成では、DeviceTreeでcompatibleを有効にすると、Kconfigのデフォルトにより `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` と `CONFIG_ZMK_KSCAN_INPUT_MATRIX` の両方が自動的に有効になります。
+**注意**: `CONFIG_ZMK_POINTING` が有効な構成では、DeviceTree で compatible を有効にすると、Kconfig のデフォルト設定により `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` と `CONFIG_ZMK_KSCAN_INPUT_MATRIX` が自動的に有効になります。
 
 ```dts
 /* グリッドに合わせて kscan_gesture の rows/columns を設定 */
 &kscan_gesture {
-    rows = <15>;    /* 5ジェスチャ * 3グリッド行 */
+    rows = <15>;    /* 5 ジェスチャ × 3 グリッド行 */
     columns = <3>;
 };
 
@@ -67,15 +67,15 @@ manifest:
 
 #### ジェスチャ仕様
 
-- 開始座標は `BTN_TOUCH` 押下後、X/Y座標が両方初期化された最初のsyncでラッチされます。
-- XまたはYの変位が初めて `flick-threshold` に到達した時点で、flick方向をラッチします。
-- flickがラッチされた後は長押しタイマーをキャンセルし、タッチを離した時にラッチ済みflickをpress+releaseで報告します。
-- 長押しホールドはTapブロック専用です。`long-press-ms` までflickがラッチされなければ、Tapセルを押下し、タッチを離すまで押下状態を維持します。
-- 座標が届かなかった場合はジェスチャを報告しません。flickもholdも成立していない場合、タッチを離した時にTapをpress+releaseで報告します。
+- 開始座標は `BTN_TOUCH` 押下後、X/Y 座標が両方揃った最初の sync でラッチされます。
+- X または Y の変位が初めて `flick-threshold` に到達した時点で、フリック方向がラッチされます。
+- フリックがラッチされると長押しタイマーはキャンセルされ、タッチを離した時点でラッチ済みフリックが press → release として報告されます。
+- 長押しホールドは Tap ブロック専用です。`long-press-ms` 以内にフリックがラッチされなければ Tap セルが押下され、タッチを離すまで押下状態を維持します。
+- 座標が届かなかった場合、ジェスチャは報告されません。フリックもホールドも成立しなかった場合、タッチを離した時点で Tap が press → release として報告されます。
 
 ### 3. キーマップ設定
 
-`kscan_gesture`デバイスは15行x3列の標準マトリックスとして動作します。各ジェスチャゾーンにキーを割り当てることができます：
+`kscan_gesture` デバイスは 15 行 × 3 列の標準マトリクスとして動作します。各ジェスチャゾーンにキーを割り当てることができます：
 
 ```dts
 /* .keymapファイル内 */
@@ -119,18 +119,18 @@ default_layer {
 };
 ```
 
-### 4. フィジカルレイアウト (ZMK Studio)
+### 4. 物理レイアウト (ZMK Studio)
 
-ZMK Studio でジェスチャグリッドをブロックごとに分離して表示するには、[keymap-drawer](https://github.com/caksoylar/keymap-drawer) ツールを使って `keys` 配列を生成します：
+ZMK Studio でジェスチャグリッドをブロックごとに分けて表示するには、[keymap-drawer](https://github.com/caksoylar/keymap-drawer) ツールで `keys` 配列を生成します：
 
 ```bash
-# 隙間のある15x3グリッドのキーを生成
+# 間隔付き 15×3 グリッドのキーを生成
 python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+333"
 ```
 
-または [ZMK Physical Layout Converter](https://zmk-physical-layout-converter.streamlit.app/) ウェブツールを使用します。
+または [ZMK Physical Layout Converter](https://zmk-physical-layout-converter.streamlit.app/) を使用することもできます。
 
-**ヒント**: 生成後、レイアウトをkscanデバイスに割り当てます：
+**ヒント**: 生成後、レイアウトを kscan デバイスに割り当てます：
 
 ```dts
 &kscan_gesture {
@@ -138,7 +138,7 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 };
 ```
 
-詳細は [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) を参照してください。
+詳しくは [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) を参照してください。
 
 ## 設定リファレンス
 
@@ -148,13 +148,13 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 | `columns` | int | 必須 | グリッドの列数 |
 | `x` | int | 必須 | 最大 X 座標解像度 |
 | `y` | int | 必須 | 最大 Y 座標解像度 |
-| `flick-threshold` | int | 必須 | フリック判定の最小ピクセル数 |
-| `long-press-ms` | int | 200 | Tapホールド時間（ミリ秒）、0で無効化 |
-| `suppress-abs` | bool | false | X/Yだけでなく、すべての `INPUT_EV_ABS` イベントを抑制 |
+| `flick-threshold` | int | 必須 | フリック判定の最小変位量 |
+| `long-press-ms` | int | 200 | Tap ホールド時間（ミリ秒）、0 で無効化 |
+| `suppress-abs` | bool | false | X/Y だけでなく、すべての `INPUT_EV_ABS` イベントを抑制 |
 | `suppress-touch` | bool | false | `INPUT_BTN_TOUCH` のみ抑制 |
-| `suppress-key` | bool | false | タッチパッド由来のボタンジェスチャも含め、すべての `INPUT_EV_KEY` イベントを抑制 |
+| `suppress-key` | bool | false | タッチパッド由来のボタンイベントも含め、すべての `INPUT_EV_KEY` イベントを抑制 |
 
-上限はビルド時に検査されます。`rows` は1-51、`columns` は1-255、`x`/`y` は1-65534、`flick-threshold` は1-65535、`long-press-ms` は0-65535です。リンク先の `kscan_gesture` は `rows = 5 * zip_matrix.rows` と同じ `columns` を設定する必要があります。
+各プロパティの範囲はビルド時に検査されます。`rows`: 1–51、`columns`: 1–255、`x`/`y`: 1–65534、`flick-threshold`: 1–65535、`long-press-ms`: 0–65535。対応する `kscan_gesture` には `rows = 5 × zip_matrix.rows` および同一の `columns` を設定してください。
 
 ## ライセンス
 
