@@ -40,7 +40,7 @@ manifest:
 
 この例では **15行 × 3列** のマトリックスを作成します（5つのジェスチャブロック × 3つのゾーン）:
 
-**注意**: DeviceTreeでcompatibleを有効にすると、Kconfigのデフォルトにより `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` と `CONFIG_ZMK_KSCAN_INPUT_MATRIX` の両方が自動的に有効になります。
+**注意**: `CONFIG_ZMK_POINTING` が有効な構成では、DeviceTreeでcompatibleを有効にすると、Kconfigのデフォルトにより `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` と `CONFIG_ZMK_KSCAN_INPUT_MATRIX` の両方が自動的に有効になります。
 
 ```dts
 /* グリッドに合わせて kscan_gesture の rows/columns を設定 */

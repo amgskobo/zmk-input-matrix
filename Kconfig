@@ -7,6 +7,7 @@ DT_COMPAT_ZMK_KSCAN_INPUT_MATRIX := zmk,kscan-input-matrix
 config ZMK_INPUT_PROCESSOR_MATRIX
     bool "Input Processor Matrix"
     default $(dt_compat_enabled,$(DT_COMPAT_ZMK_INPUT_PROCESSOR_MATRIX))
+    depends on ZMK_POINTING
     depends on (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
     help
       Enable the ZMK Input Processor Matrix (ZIP Matrix).

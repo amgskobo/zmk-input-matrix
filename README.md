@@ -40,7 +40,7 @@ Include the standard helper in your shield's `.overlay` or `.zmk.dts`:
 
 This example creates a **15-row x 3-column** matrix (5 gesture blocks x 3 zones):
 
-**Note**: Enabling the compatible in DeviceTree automatically enables both `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` and `CONFIG_ZMK_KSCAN_INPUT_MATRIX` via Kconfig defaults.
+**Note**: When `CONFIG_ZMK_POINTING` is enabled, enabling the compatible in DeviceTree automatically enables both `CONFIG_ZMK_INPUT_PROCESSOR_MATRIX` and `CONFIG_ZMK_KSCAN_INPUT_MATRIX` via Kconfig defaults.
 
 ```dts
 /* Set kscan_gesture rows/columns to match your grid */
