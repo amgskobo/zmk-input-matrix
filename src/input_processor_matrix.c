@@ -129,15 +129,17 @@ static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
     uint8_t grid_column;
 
 #if ZIP_MATRIX_USE_DIAMOND_TAP
-    if (cfg->diamond_tap && gesture == GESTURE_TAP &&
+    if (gesture == GESTURE_TAP && cfg->diamond_tap &&
         cfg->rows == 1U && cfg->columns == 4U) {
         grid_row = 0U;
         grid_column = calculate_diamond_column(cfg, (uint16_t)px, (uint16_t)py);
     } else
 #endif
     {
-        grid_row = MIN(cfg->rows - 1U, (uint8_t)(py * cfg->rows / cfg->y));
-        grid_column = MIN(cfg->columns - 1U, (uint8_t)(px * cfg->columns / cfg->x));
+        grid_row = (cfg->rows == 1U) ? 0U :
+                   MIN(cfg->rows - 1U, (uint8_t)(py * cfg->rows / cfg->y));
+        grid_column = (cfg->columns == 1U) ? 0U :
+                      MIN(cfg->columns - 1U, (uint8_t)(px * cfg->columns / cfg->x));
     }
 
     *out_row = ((uint8_t)gesture * cfg->rows) + grid_row;
