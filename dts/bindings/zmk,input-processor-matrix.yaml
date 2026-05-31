@@ -62,3 +62,14 @@ properties:
       The tap-hold cell stays pressed until BTN_TOUCH is released.
       Set to 0 to disable tap hold; taps and flicks are still reported as
       press+release pairs.
+  diamond-tap:
+    type: boolean
+    description: |
+      If true, use diamond (diagonal) partitioning for Tap gestures instead
+      of the regular rectangular grid. Requires rows = 1 and columns = 4.
+      The four diagonal quadrants map to:
+        col 0 = Up, col 1 = Right, col 2 = Down, col 3 = Left.
+      Points on a diagonal boundary prefer the vertical axis, so exact center
+      maps to Down.
+      Flick gestures always use the standard rectangular grid regardless
+      of this setting.

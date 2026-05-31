@@ -142,6 +142,81 @@ Sync while touch is inactive and no contact is active
 - The paired KSCAN node must use `rows = 5 * zip_matrix.rows` and matching `columns`.
 - Init priority follows KSCAN automatically: the KSCAN proxy uses `CONFIG_KSCAN_INIT_PRIORITY`, and the input processor initializes at `CONFIG_KSCAN_INIT_PRIORITY + 1` via `UTIL_INC()`. Reports are ignored until the KSCAN proxy is ready and enabled.
 
+## Diamond-Tap Mode
+
+When `diamond-tap;` is set on a 1×4 grid, Tap gestures use diagonal
+partitioning instead of the regular rectangular grid. Two diagonals divide
+the touch area into four triangles:
+
+```text
+ (0,0)---------------(x,0)
+   | \      Up       / |
+   |   \   col 0   /   |
+   |     \       /     |
+   |       \   /       |
+   | Left    X   Right |
+   | col 3 /   \ col 1 |
+   |     /       \     |
+   |   /   Down    \   |
+   | /     col 2     \ |
+ (0,y)---------------(x,y)
+```
+
+The calculation chooses the nearest cardinal key center after normalizing the
+touch area. Equivalently, it compares the distance from the center on each axis:
+
+```text
+dx = 2 * px - x
+dy = 2 * py - y
+
+vertical when |dy| / y >= |dx| / x
+```
+
+| Column | Quadrant | Condition (normalised) |
+|--------|----------|----------------------|
+| 0      | Up       | vertical ∧ dy < 0    |
+| 1      | Right    | horizontal ∧ dx >= 0 |
+| 2      | Down     | vertical ∧ dy >= 0   |
+| 3      | Left     | horizontal ∧ dx < 0  |
+
+Points on a diagonal boundary prefer the vertical axis, so exact center maps to
+Down.
+
+Flick gestures (Up/Down/Left/Right) are **not affected** by this setting and
+always use the standard 1×4 rectangular grid.
+
+### Example Configuration
+
+```dts
+kscan_gesture: kscan_gesture {
+    compatible = "zmk,kscan-input-matrix";
+    rows = <5>;      /* 5 gestures * 1 row */
+    columns = <4>;
+};
+
+zip_matrix: zip_matrix {
+    compatible = "zmk,input-processor-matrix";
+    rows = <1>;
+    columns = <4>;
+    x = <1024>;
+    y = <1024>;
+    flick-threshold = <50>;
+    long-press-ms = <200>;
+    diamond-tap;
+    kscan = <&kscan_gesture>;
+};
+```
+
+### Keymap Layout
+
+```text
+row 0: Tap diamond   → col 0=Up, col 1=Right, col 2=Down, col 3=Left
+row 1: Flick Up      → col 0..3 (rectangular grid)
+row 2: Flick Down    → col 0..3
+row 3: Flick Left    → col 0..3
+row 4: Flick Right   → col 0..3
+```
+
 ## Development Standards
 
 - Internal property: use `columns`, not `cols`, to align with `zmk,kscan-composite` and `zmk,matrix-transform`.

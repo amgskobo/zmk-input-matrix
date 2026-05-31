@@ -28,6 +28,8 @@ LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
 #define ZIP_MATRIX_MAX_COORD (UINT16_MAX - 1U)
 #define ZIP_MATRIX_MAX_U16 UINT16_MAX
 
+#define ZIP_MATRIX_USE_DIAMOND_TAP DT_ANY_INST_HAS_PROP_STATUS_OKAY(diamond_tap)
+
 enum gesture_type {
     GESTURE_TAP   = 0,
     GESTURE_UP    = 1,
@@ -46,6 +48,9 @@ struct zip_matrix_config {
     bool suppress_abs;
     bool suppress_touch;
     bool suppress_key;
+#if ZIP_MATRIX_USE_DIAMOND_TAP
+    bool diamond_tap;
+#endif
     const struct device *kscan_dev;
 };
 
@@ -83,6 +88,36 @@ static uint16_t clamp_coord_value(int32_t value, uint16_t max)
     return (uint16_t)value;
 }
 
+#if ZIP_MATRIX_USE_DIAMOND_TAP
+static uint8_t calculate_diamond_column(const struct zip_matrix_config *cfg,
+                                        uint16_t px, uint16_t py)
+{
+    /*
+     * Diamond partitioning for a 1x4 Tap grid.
+     * Choose the nearest cardinal key center after normalizing the touch area:
+     *   col 0 = Up, col 1 = Right, col 2 = Down, col 3 = Left.
+     *
+     * The diagonal boundaries are equivalent to comparing normalized distance
+     * from the center on each axis:
+     *   vertical when |2*py - y| / y >= |2*px - x| / x
+     *
+     * Cross-multiply to avoid floating point. Ties prefer the vertical axis.
+     */
+    int32_t dx = ((int32_t)px * 2) - (int32_t)cfg->x;
+    int32_t dy = ((int32_t)py * 2) - (int32_t)cfg->y;
+    uint32_t abs_dx = (uint32_t)(dx < 0 ? -dx : dx);
+    uint32_t abs_dy = (uint32_t)(dy < 0 ? -dy : dy);
+    uint32_t horizontal = abs_dx * cfg->y;
+    uint32_t vertical = abs_dy * cfg->x;
+
+    if (vertical >= horizontal) {
+        return (dy < 0) ? 0U : 2U;
+    }
+
+    return (dx >= 0) ? 1U : 3U;
+}
+#endif
+
 static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
                                         uint16_t x, uint16_t y,
                                         enum gesture_type gesture,
@@ -90,8 +125,20 @@ static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
 {
     uint32_t px = MIN((uint32_t)x, (uint32_t)cfg->x);
     uint32_t py = MIN((uint32_t)y, (uint32_t)cfg->y);
-    uint8_t grid_row = MIN(cfg->rows - 1U, (uint8_t)(py * cfg->rows / cfg->y));
-    uint8_t grid_column = MIN(cfg->columns - 1U, (uint8_t)(px * cfg->columns / cfg->x));
+    uint8_t grid_row;
+    uint8_t grid_column;
+
+#if ZIP_MATRIX_USE_DIAMOND_TAP
+    if (cfg->diamond_tap && gesture == GESTURE_TAP &&
+        cfg->rows == 1U && cfg->columns == 4U) {
+        grid_row = 0U;
+        grid_column = calculate_diamond_column(cfg, (uint16_t)px, (uint16_t)py);
+    } else
+#endif
+    {
+        grid_row = MIN(cfg->rows - 1U, (uint8_t)(py * cfg->rows / cfg->y));
+        grid_column = MIN(cfg->columns - 1U, (uint8_t)(px * cfg->columns / cfg->x));
+    }
 
     *out_row = ((uint8_t)gesture * cfg->rows) + grid_row;
     *out_column = grid_column;
@@ -395,7 +442,20 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
                      (ZIP_MATRIX_GESTURE_COUNT * DT_INST_PROP(n, rows)), \
                  "zmk,kscan-input-matrix rows must equal 5 * zmk,input-processor-matrix rows"); \
     BUILD_ASSERT(DT_PROP_OR(ZIP_MATRIX_KSCAN_NODE(n), columns, 0) == DT_INST_PROP(n, columns), \
-                 "zmk,kscan-input-matrix columns must equal zmk,input-processor-matrix columns");
+                 "zmk,kscan-input-matrix columns must equal zmk,input-processor-matrix columns"); \
+    ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n)
+
+#if ZIP_MATRIX_USE_DIAMOND_TAP
+#define ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n) \
+    BUILD_ASSERT(!DT_INST_PROP(n, diamond_tap) || \
+                     (DT_INST_PROP(n, rows) == 1 && DT_INST_PROP(n, columns) == 4), \
+                 "diamond-tap requires rows = 1 and columns = 4");
+#define ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
+        .diamond_tap = DT_INST_PROP(n, diamond_tap),
+#else
+#define ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n)
+#define ZIP_MATRIX_DIAMOND_TAP_FIELD(n)
+#endif
 
 #define ZIP_MATRIX_INST(n) \
     ZIP_MATRIX_VALIDATE_INST(n) \
@@ -406,6 +466,7 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
         .flick_threshold = DT_INST_PROP(n, flick_threshold), .long_press_ms = DT_INST_PROP(n, long_press_ms), \
         .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_touch = DT_INST_PROP(n, suppress_touch), \
         .suppress_key = DT_INST_PROP(n, suppress_key), \
+        ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
         .kscan_dev = DEVICE_DT_GET(DT_INST_PHANDLE(n, kscan)), \
     }; \
     DEVICE_DT_INST_DEFINE(n, zip_matrix_init, NULL, &zip_matrix_data_##n, &zip_matrix_config_##n, POST_KERNEL, ZIP_MATRIX_INIT_PRIORITY, &zip_matrix_driver_api);
