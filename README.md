@@ -36,6 +36,9 @@ Include the standard helper in your shield's `.overlay` or `.zmk.dts`:
 #include <zmk-input-matrix/input_matrix.dtsi>
 ```
 
+This helper defines the default `zip_matrix` input processor and `kscan_gesture`
+KSCAN proxy nodes. You can skip it only if you define equivalent nodes yourself.
+
 ### 2. Configuration Example (3x3 Grid)
 
 This example creates a **15-row x 3-column** matrix (5 gesture blocks x 3 zones):
@@ -163,8 +166,23 @@ See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-l
 | `suppress-abs` | bool | false | Consume all `INPUT_EV_ABS` events, not only X/Y |
 | `suppress-touch` | bool | false | Consume only `INPUT_BTN_TOUCH` |
 | `suppress-key` | bool | false | Consume all `INPUT_EV_KEY` events, including touchpad button gestures |
+| `diamond-tap` | bool | false | Use D-pad-style diamond zones for Tap on a 1x4 grid |
 
 Limits are enforced at build time: `rows` must be 1-51, `columns` 1-255, `x`/`y` 1-65534, `flick-threshold` 1-65535, and `long-press-ms` 0-65535. The linked `kscan_gesture` node must use `rows = 5 * zip_matrix.rows` and matching `columns`.
+
+### Diamond Tap
+
+When `diamond-tap;` is set, Tap gestures on a 1x4 grid use four diagonal zones:
+
+| Column | Tap zone |
+| :---: | :--- |
+| 0 | Up |
+| 1 | Right |
+| 2 | Down |
+| 3 | Left |
+
+Flick gestures still use the regular rectangular 1x4 grid. `diamond-tap`
+requires `rows = <1>` and `columns = <4>`.
 
 ## License
 

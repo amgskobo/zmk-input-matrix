@@ -36,6 +36,9 @@ manifest:
 #include <zmk-input-matrix/input_matrix.dtsi>
 ```
 
+このヘルパーは標準の `zip_matrix` 入力プロセッサと `kscan_gesture` KSCAN proxy
+ノードを定義します。同等のノードを自分で定義する場合だけ、省略できます。
+
 ### 2. 設定例 (3x3 グリッド)
 
 この例では **15 行 × 3 列** のマトリクスを作成します（5 ジェスチャブロック × 3 ゾーン）:
@@ -153,8 +156,23 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 | `suppress-abs` | bool | false | X/Y だけでなく、すべての `INPUT_EV_ABS` イベントを抑制 |
 | `suppress-touch` | bool | false | `INPUT_BTN_TOUCH` のみ抑制 |
 | `suppress-key` | bool | false | タッチパッド由来のボタンイベントも含め、すべての `INPUT_EV_KEY` イベントを抑制 |
+| `diamond-tap` | bool | false | 1×4 グリッドの Tap を D-pad 風のダイヤモンド領域に分割 |
 
 各プロパティの範囲はビルド時に検査されます。`rows`: 1–51、`columns`: 1–255、`x`/`y`: 1–65534、`flick-threshold`: 1–65535、`long-press-ms`: 0–65535。対応する `kscan_gesture` には `rows = 5 × zip_matrix.rows` および同一の `columns` を設定してください。
+
+### Diamond Tap
+
+`diamond-tap;` を設定すると、1×4 グリッドの Tap は斜め境界の 4 領域に分割されます。
+
+| 列 | Tap 領域 |
+| :---: | :--- |
+| 0 | Up |
+| 1 | Right |
+| 2 | Down |
+| 3 | Left |
+
+フリックジェスチャは通常の矩形 1×4 グリッドのままです。`diamond-tap` には
+`rows = <1>` と `columns = <4>` が必要です。
 
 ## ライセンス
 
