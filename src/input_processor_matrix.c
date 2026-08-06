@@ -16,6 +16,8 @@
 #include <zephyr/spinlock.h>
 #include <drivers/input_processor.h>
 #include <kscan_input_matrix.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/layer_state_changed.h>
 
 LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
 
@@ -544,3 +546,64 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
     DEVICE_DT_INST_DEFINE(n, zip_matrix_init, NULL, &zip_matrix_data_##n, &zip_matrix_config_##n, POST_KERNEL, ZIP_MATRIX_INIT_PRIORITY, &zip_matrix_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ZIP_MATRIX_INST)
+
+/*
+ * Release a reported hold that can no longer be released by the normal path.
+ *
+ * A hold is pressed from the delayed work and released from handle_event, when
+ * the touch ends. But which processors run is decided per event from the layer
+ * active at that moment: once the layer changes, this processor stops being
+ * called and the BTN_TOUCH release is routed elsewhere, so that release never
+ * happens and the kscan cell stays pressed indefinitely.
+ *
+ * Layer changes are therefore watched directly. A hold this instance has
+ * already reported is released, and a hold that is merely pending is cancelled
+ * - the delayed work would otherwise fire after the layer had already changed
+ * and press a cell that nothing can then release.
+ */
+static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
+{
+    struct zip_matrix_data *data = dev->data;
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    bool release = data->is_holding && data->hold_reported;
+    uint8_t r = data->hold_row;
+    uint8_t c = data->hold_column;
+
+    data->is_holding = false;
+    data->hold_reported = false;
+    data->hold_release_pending = false;
+    data->start_x = COORD_UNINITIALIZED;
+    data->start_y = COORD_UNINITIALIZED;
+    data->flick_latched = false;
+    data->flick_gesture = GESTURE_TAP;
+    /*
+     * Invalidate the contact so a hold_work already past its spin lock cannot
+     * decide it still owns this contact and report a press.
+     */
+    data->contact_id++;
+
+    k_spin_unlock(&data->lock, key);
+
+    /* Drop a pending hold whether or not one was already reported. */
+    k_work_cancel_delayable(&data->hold_work);
+
+    if (release) {
+        LOG_WRN("Releasing held cell %u,%u: layer changed while it was down", r, c);
+        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, false);
+    }
+}
+
+#define ZIP_MATRIX_RELEASE_HOLD(n) \
+    zip_matrix_release_hold_on_layer_change(DEVICE_DT_INST_GET(n));
+
+static int zip_matrix_layer_state_listener(const zmk_event_t *eh)
+{
+    ARG_UNUSED(eh);
+
+    DT_INST_FOREACH_STATUS_OKAY(ZIP_MATRIX_RELEASE_HOLD)
+
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(zip_matrix_layer, zip_matrix_layer_state_listener);
+ZMK_SUBSCRIPTION(zip_matrix_layer, zmk_layer_state_changed);
