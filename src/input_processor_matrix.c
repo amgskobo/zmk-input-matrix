@@ -71,6 +71,12 @@ struct zip_matrix_data {
     bool hold_release_pending;
     bool flick_latched;
     enum gesture_type flick_gesture;
+    /*
+     * Squared travel of the farthest point reached so far, so the direction can
+     * be re-read from the longest vector instead of the short one that happened
+     * to cross the threshold first.
+     */
+    uint64_t flick_max_travel;
     uint8_t hold_row;
     uint8_t hold_column;
     uint32_t contact_id;
@@ -174,10 +180,10 @@ static uint8_t calculate_diamond_column(const struct zip_matrix_config *cfg,
      */
     int32_t dx = ((int32_t)px * 2) - (int32_t)cfg->x;
     int32_t dy = ((int32_t)py * 2) - (int32_t)cfg->y;
-    uint32_t abs_dx = (uint32_t)(dx < 0 ? -dx : dx);
-    uint32_t abs_dy = (uint32_t)(dy < 0 ? -dy : dy);
-    uint32_t horizontal = abs_dx * cfg->y;
-    uint32_t vertical = abs_dy * cfg->x;
+    uint64_t abs_dx = (uint64_t)(dx < 0 ? -dx : dx);
+    uint64_t abs_dy = (uint64_t)(dy < 0 ? -dy : dy);
+    uint64_t horizontal = abs_dx * cfg->y;
+    uint64_t vertical = abs_dy * cfg->x;
 
     if (vertical >= horizontal) {
         return (dy < 0) ? 0U : 2U;
@@ -198,6 +204,13 @@ static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
     uint8_t grid_column;
 
 #if ZIP_MATRIX_USE_DIAMOND_TAP
+    /*
+     * Taps only. The diamond reads a direction out of where the finger rests,
+     * which is the opposite of what a flick measures, and on a pad this small a
+     * stroke has to begin on the far side of the one it travels towards - so the
+     * region a flick starts in is close to a restatement of its row. The
+     * rectangular split keeps the column reporting something the row does not.
+     */
     if (gesture == GESTURE_TAP && cfg->diamond_tap &&
         cfg->rows == 1U && cfg->columns == 4U) {
         grid_row = 0U;
@@ -215,16 +228,70 @@ static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
     *out_column = grid_column;
 }
 
+/*
+ * Squared travel distance, widened before multiplying. A resolution may be set
+ * as high as ZIP_MATRIX_MAX_COORD, and squaring a delta that large overflows 32
+ * bits well before the sum is formed.
+ */
+static uint64_t travel_squared(int32_t dx, int32_t dy)
+{
+    uint64_t adx = (uint64_t)(dx < 0 ? -(int64_t)dx : (int64_t)dx);
+    uint64_t ady = (uint64_t)(dy < 0 ? -(int64_t)dy : (int64_t)dy);
+
+    return (adx * adx) + (ady * ady);
+}
+
+static uint64_t flick_threshold_squared(const struct zip_matrix_config *cfg)
+{
+    return (uint64_t)cfg->flick_threshold * (uint64_t)cfg->flick_threshold;
+}
+
+/*
+ * A diamond instance takes its direction from the spot the finger came to rest
+ * on, so travel carries no direction for it to read - a stroke on a pad this
+ * small has to run away from the region it started in, leaving the two readings
+ * pointing opposite ways. Such an instance reports taps only, which also frees
+ * the board from carrying four gesture rows it can never reach.
+ */
+static bool flick_enabled(const struct zip_matrix_config *cfg)
+{
+#if ZIP_MATRIX_USE_DIAMOND_TAP
+    return !cfg->diamond_tap;
+#else
+    ARG_UNUSED(cfg);
+    return true;
+#endif
+}
+
 static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, int32_t dx, int32_t dy)
 {
-    uint32_t adx = (uint32_t)(dx < 0 ? -dx : dx);
-    uint32_t ady = (uint32_t)(dy < 0 ? -dy : dy);
+    uint64_t adx = (uint64_t)(dx < 0 ? -(int64_t)dx : (int64_t)dx);
+    uint64_t ady = (uint64_t)(dy < 0 ? -(int64_t)dy : (int64_t)dy);
 
-    if (adx < cfg->flick_threshold && ady < cfg->flick_threshold) {
+    if (!flick_enabled(cfg)) {
         return GESTURE_TAP;
     }
 
-    return (ady > adx) ? (dy < 0 ? GESTURE_UP : GESTURE_DOWN) : (dx < 0 ? GESTURE_LEFT : GESTURE_RIGHT);
+    /*
+     * Compare true distance rather than each axis on its own. Testing the axes
+     * separately describes a square, so a diagonal travel had to be sqrt(2)
+     * longer than an axis-aligned one before it counted as a flick.
+     */
+    if (travel_squared(dx, dy) < flick_threshold_squared(cfg)) {
+        return GESTURE_TAP;
+    }
+
+    /*
+     * Same boundary the diamond uses: normalise each axis by the resolution and
+     * let a tie fall to the vertical. Comparing adx and ady directly would put
+     * the split at 45 degrees in raw counts and disagree with the diamond on a
+     * pad whose axes differ.
+     */
+    if (ady * cfg->x >= adx * cfg->y) {
+        return (dy < 0) ? GESTURE_UP : GESTURE_DOWN;
+    }
+
+    return (dx < 0) ? GESTURE_LEFT : GESTURE_RIGHT;
 }
 
 static void hold_work_handler(struct k_work *work)
@@ -273,6 +340,7 @@ static void hold_work_handler(struct k_work *work)
                 data->start_y = COORD_UNINITIALIZED;
                 data->flick_latched = false;
                 data->flick_gesture = GESTURE_TAP;
+                data->flick_max_travel = 0U;
                 if (!data->is_btn_touch) {
                     data->current_x = COORD_UNINITIALIZED;
                     data->current_y = COORD_UNINITIALIZED;
@@ -347,6 +415,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 data->is_btn_touch = true;
                 data->flick_latched = false;
                 data->flick_gesture = GESTURE_TAP;
+                data->flick_max_travel = 0U;
                 data->start_x = COORD_UNINITIALIZED;
                 data->start_y = COORD_UNINITIALIZED;
             } else if (!on && was_touch) {
@@ -372,18 +441,25 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                 data->start_x = data->current_x;
                 data->start_y = data->current_y;
                 schedule_hold = cfg->long_press_ms > 0;
-            } else if (data->start_x != COORD_UNINITIALIZED &&
-                       !(data->is_holding && data->hold_contact_id == data->contact_id) &&
-                       !data->flick_latched) {
+            } else if (flick_enabled(cfg) && data->start_x != COORD_UNINITIALIZED &&
+                       !(data->is_holding && data->hold_contact_id == data->contact_id)) {
                 int32_t dx = (int32_t)data->current_x - (int32_t)data->start_x;
                 int32_t dy = (int32_t)data->current_y - (int32_t)data->start_y;
-                uint32_t adx = (uint32_t)(dx < 0 ? -dx : dx);
-                uint32_t ady = (uint32_t)(dy < 0 ? -dy : dy);
+                uint64_t travel = travel_squared(dx, dy);
 
-                if (adx >= cfg->flick_threshold || ady >= cfg->flick_threshold) {
+                /*
+                 * Keep following the contact after it qualifies. The first
+                 * sample past the threshold is the shortest vector of the whole
+                 * stroke and the least trustworthy one to read a direction
+                 * from, so hold on to the farthest point instead. The latch
+                 * itself still fires once, to drop the pending hold.
+                 */
+                if (travel >= flick_threshold_squared(cfg) &&
+                    travel > data->flick_max_travel) {
+                    cancel_hold = !data->flick_latched;
                     data->flick_latched = true;
+                    data->flick_max_travel = travel;
                     data->flick_gesture = get_gesture_type(cfg, dx, dy);
-                    cancel_hold = true;
                 }
             }
         } else if (data->start_x != COORD_UNINITIALIZED) {
@@ -403,6 +479,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
             data->current_y = COORD_UNINITIALIZED;
             data->flick_latched = false;
             data->flick_gesture = GESTURE_TAP;
+            data->flick_max_travel = 0U;
 
             if (held && !hold_reported) {
                 data->hold_release_pending = true;
@@ -477,6 +554,7 @@ static int zip_matrix_init(const struct device *dev)
     data->hold_release_pending = false;
     data->flick_latched = false;
     data->flick_gesture = GESTURE_TAP;
+    data->flick_max_travel = 0U;
     data->contact_id = 0;
     data->hold_contact_id = 0;
     data->suppressed_btns = 0;
@@ -513,13 +591,20 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
     BUILD_ASSERT(DT_INST_PROP(n, long_press_ms) <= ZIP_MATRIX_MAX_U16, \
                  "zmk,input-processor-matrix long-press-ms must be <= 65535"); \
     BUILD_ASSERT(DT_PROP_OR(ZIP_MATRIX_KSCAN_NODE(n), rows, 0) == \
-                     (ZIP_MATRIX_GESTURE_COUNT * DT_INST_PROP(n, rows)), \
-                 "zmk,kscan-input-matrix rows must equal 5 * zmk,input-processor-matrix rows"); \
+                     (ZIP_MATRIX_GESTURE_ROWS(n) * DT_INST_PROP(n, rows)), \
+                 "zmk,kscan-input-matrix rows must equal zmk,input-processor-matrix rows times " \
+                 "the number of gestures reported: 5 normally, 1 with diamond-tap"); \
     BUILD_ASSERT(DT_PROP_OR(ZIP_MATRIX_KSCAN_NODE(n), columns, 0) == DT_INST_PROP(n, columns), \
                  "zmk,kscan-input-matrix columns must equal zmk,input-processor-matrix columns"); \
     ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n)
 
 #if ZIP_MATRIX_USE_DIAMOND_TAP
+/*
+ * A diamond instance reports taps only, so it never uses the four flick rows and
+ * the kscan proxy behind it needs just one row per grid row.
+ */
+#define ZIP_MATRIX_GESTURE_ROWS(n) \
+    (DT_INST_PROP(n, diamond_tap) ? 1 : ZIP_MATRIX_GESTURE_COUNT)
 #define ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n) \
     BUILD_ASSERT(!DT_INST_PROP(n, diamond_tap) || \
                      (DT_INST_PROP(n, rows) == 1 && DT_INST_PROP(n, columns) == 4), \
@@ -527,6 +612,7 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
 #define ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
         .diamond_tap = DT_INST_PROP(n, diamond_tap),
 #else
+#define ZIP_MATRIX_GESTURE_ROWS(n) ZIP_MATRIX_GESTURE_COUNT
 #define ZIP_MATRIX_VALIDATE_DIAMOND_TAP(n)
 #define ZIP_MATRIX_DIAMOND_TAP_FIELD(n)
 #endif
@@ -576,6 +662,7 @@ static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
     data->start_y = COORD_UNINITIALIZED;
     data->flick_latched = false;
     data->flick_gesture = GESTURE_TAP;
+    data->flick_max_travel = 0U;
     /*
      * Invalidate the contact so a hold_work already past its spin lock cannot
      * decide it still owns this contact and report a press.
