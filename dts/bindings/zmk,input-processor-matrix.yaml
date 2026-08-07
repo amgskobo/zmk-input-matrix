@@ -25,9 +25,17 @@ properties:
     type: int
     required: true
     description: |
-      Minimum displacement in pixels to register a flick gesture. Must be 1 to 65535.
-      A flick is latched when X or Y displacement first reaches this threshold.
-      After that, the long-press timer is canceled and release reports the latched flick.
+      Minimum travel from the touch origin to register a flick, in pixels.
+      Must be 1 to 65535.
+      Travel is measured as true distance, so the threshold describes a circle
+      around the origin rather than a square: a diagonal stroke qualifies at the
+      same length as a straight one.
+      A contact keeps being followed after it qualifies, and the direction is
+      read from the farthest point it reaches - the first sample past the
+      threshold is the shortest vector of the whole stroke and the least
+      reliable one to take a direction from.
+      The long-press timer is canceled when the contact first qualifies, and the
+      flick is reported as press+release on BTN_TOUCH release.
   suppress-abs:
     type: boolean
     description: |
@@ -59,17 +67,23 @@ properties:
       Hold applies to the Tap block only. If a flick is latched before the timeout,
       the hold timer is canceled and the flick is reported as press+release on
       BTN_TOUCH release.
-      The tap-hold cell stays pressed until BTN_TOUCH is released.
+      The tap-hold cell stays pressed until BTN_TOUCH is released, or until the
+      active layer changes - a layer change reroutes the release that would
+      otherwise never reach this processor, so the cell is released there too.
       Set to 0 to disable tap hold; taps and flicks are still reported as
       press+release pairs.
   diamond-tap:
     type: boolean
     description: |
-      If true, use diamond (diagonal) partitioning for Tap gestures instead
-      of the regular rectangular grid. Requires rows = 1 and columns = 4.
+      If true, use diamond (diagonal) partitioning instead of the regular
+      rectangular grid. Requires rows = 1 and columns = 4.
       The four diagonal quadrants map to:
         col 0 = Up, col 1 = Right, col 2 = Down, col 3 = Left.
       Points on a diagonal boundary prefer the vertical axis, so exact center
       maps to Down.
-      Flick gestures always use the standard rectangular grid regardless
-      of this setting.
+      Such an instance reports taps only. A diamond takes its direction from
+      where the finger comes to rest, which is the opposite of what a flick
+      measures: on a small pad a stroke has to begin on the far side of the one
+      it travels towards, leaving the two readings pointing opposite ways.
+      The kscan proxy behind a diamond instance therefore needs one row per grid
+      row instead of five, since the four flick rows are never reached.

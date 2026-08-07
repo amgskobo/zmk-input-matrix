@@ -283,6 +283,19 @@ static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, i
     return (dx < 0) ? GESTURE_LEFT : GESTURE_RIGHT;
 }
 
+/*
+ * Press the hold, then work out whether it has to be released again.
+ *
+ * The press is reported between the two critical sections, and the state left
+ * behind is only consistent if nothing else runs in that gap. That holds
+ * because this work runs on the system workqueue, which is cooperative -
+ * CONFIG_SYSTEM_WORKQUEUE_PRIORITY is negative - while the input thread that
+ * calls handle_event is preemptible, and the report itself only queues a
+ * message and never yields. Were the workqueue made preemptible, a touch
+ * ending inside that gap would take the release path while hold_reported was
+ * still clear, and the press just reported would be left with nothing to
+ * release it.
+ */
 static void hold_work_handler(struct k_work *work)
 {
     struct zip_matrix_data *data = CONTAINER_OF(work, struct zip_matrix_data, hold_work.work);
