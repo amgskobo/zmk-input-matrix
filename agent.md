@@ -81,10 +81,12 @@ Example for point `(1,1)` on a 3x3 grid:
 1. Event capture: `zip_matrix_handle_event` observes `INPUT_EV_ABS` and `INPUT_EV_KEY`. `suppress-abs` consumes every `INPUT_EV_ABS` event after internal state is updated. `suppress-touch` consumes only `INPUT_BTN_TOUCH`. `suppress-key` consumes every `INPUT_EV_KEY` event, including touchpad button gestures.
 2. Coordinate buffering: `INPUT_ABS_X` and `INPUT_ABS_Y` update `current_x/current_y`. Completed contacts reset these fields to `COORD_UNINITIALIZED` so the next touch cannot latch stale coordinates.
 3. Start latching: the first sync while touch is active latches `start_x/start_y`, but only after both coordinates are initialized. If no coordinates arrive, no gesture is emitted.
-4. Flick latching: after the start point is latched, each sync compares displacement against `flick-threshold`. The first threshold crossing latches the flick direction and cancels the pending tap-hold timer.
-5. Tap hold: if no flick is latched before `long_press_ms`, delayed work presses the Tap cell at the start coordinate. The hold stays pressed until release.
+4. Flick qualification: after the start point is latched, each sync compares squared travel against the squared threshold. Travel is true distance, so the boundary is a circle. The first crossing cancels the pending tap-hold timer; the contact keeps being tracked afterwards and the direction is re-read whenever a farther point is reached, so the reported direction comes from the longest vector of the stroke rather than the shortest one.
+5. Tap hold: if no flick qualifies before `long_press_ms`, delayed work presses the Tap cell at the start coordinate. The hold stays pressed until release, or until the layer changes.
 6. Race handling: each touch has a `contact_id`. If release or the next touch happens while hold work is between state update and press reporting, `hold_release_pending` makes the work emit the release immediately after the press, exactly once, without clearing state for a newer touch.
 7. Locking rule: shared state is protected by `k_spinlock`, but KSCAN reporting and work scheduling/cancellation happen outside the spinlock.
+8. Workqueue assumption: `hold_work_handler` reports its press between two critical sections. The state it leaves behind is only consistent because nothing else runs in that gap - the work is on the system workqueue, which is cooperative (`CONFIG_SYSTEM_WORKQUEUE_PRIORITY` is negative), while the input thread that calls `handle_event` is preemptible, and the report itself only queues a message and never yields. A preemptible system workqueue would break this.
+9. Layer changes: the chain is selected per event from the layer active at that moment, so one contact can be split across two chains and the `BTN_TOUCH` release routed elsewhere. `zmk_layer_state_changed` is subscribed directly - a reported hold is released, a pending hold is cancelled, the suppression record is cleared, and `contact_id` is incremented so hold work already past its spin lock cannot claim the contact.
 
 ## Event Processing Flow
 
@@ -105,9 +107,11 @@ Sync while touch is active
   - If start is unset and both coordinates are initialized:
       latch start_x/start_y from current_x/current_y.
       schedule tap-hold work when long_press_ms > 0.
-  - Else if start is set, no hold is active, and no flick is latched:
-      compare current - start with flick-threshold.
-      on first threshold crossing, latch flick direction and cancel tap-hold work.
+  - Else if start is set, flicks are enabled, and no hold owns this contact:
+      compare squared travel of (current - start) with the squared threshold.
+      if it qualifies and exceeds the farthest travel so far:
+        cancel tap-hold work on the first qualification only.
+        record the new farthest travel and re-read the direction from it.
 
 Tap-hold timeout
   - If touch is still active, start is set, and no flick is latched:
@@ -130,6 +134,12 @@ BTN_TOUCH released, then sync
 
 Sync while touch is inactive and no contact is active
   - Clear any buffered coordinates to prevent stale start latching on the next touch.
+
+Layer changed
+  - Release a cell this instance has already pressed.
+  - Cancel a hold that is only pending, so it cannot fire after the change.
+  - Clear start/flick state and the suppressed-button record.
+  - Increment contact_id so in-flight hold work cannot claim this contact.
 ```
 
 ## Configuration Limits
@@ -139,7 +149,7 @@ Sync while touch is inactive and no contact is active
 - `x` / `y`: 1 to 65534
 - `flick-threshold`: 1 to 65535
 - `long-press-ms`: 0 to 65535
-- The paired KSCAN node must use `rows = 5 * zip_matrix.rows` and matching `columns`.
+- The paired KSCAN node must use matching `columns` and `rows = zip_matrix.rows * gestures`, where `gestures` is 5 normally and 1 with `diamond-tap`.
 - Init priority follows KSCAN automatically: the KSCAN proxy uses `CONFIG_KSCAN_INIT_PRIORITY`, and the input processor initializes at `CONFIG_KSCAN_INIT_PRIORITY + 1` via `UTIL_INC()`. Reports are ignored until the KSCAN proxy is ready and enabled.
 
 ## Diamond-Tap Mode
@@ -182,15 +192,22 @@ vertical when |dy| / y >= |dx| / x
 Points on a diagonal boundary prefer the vertical axis, so exact center maps to
 Down.
 
-Flick gestures (Up/Down/Left/Right) are **not affected** by this setting and
-always use the standard 1×4 rectangular grid.
+A diamond instance reports **taps only**. The diamond takes its direction from
+where the finger comes to rest, which is the opposite of what a flick measures:
+on a pad this small a stroke has to begin on the far side of the one it travels
+towards, leaving the two readings pointing opposite ways. `get_gesture_type`
+therefore returns `GESTURE_TAP` unconditionally for such an instance, the four
+flick rows are never reached, and `ZIP_MATRIX_GESTURE_ROWS` drops to 1 so the
+kscan proxy behind it carries one row per grid row instead of five.
+
+`flick-threshold` is still required by the binding but is inert here.
 
 ### Example Configuration
 
 ```dts
 kscan_gesture: kscan_gesture {
     compatible = "zmk,kscan-input-matrix";
-    rows = <5>;      /* 5 gestures * 1 row */
+    rows = <1>;      /* 1 gesture (Tap) * 1 row */
     columns = <4>;
 };
 
@@ -211,11 +228,9 @@ zip_matrix: zip_matrix {
 
 ```text
 row 0: Tap diamond   → col 0=Up, col 1=Right, col 2=Down, col 3=Left
-row 1: Flick Up      → col 0..3 (rectangular grid)
-row 2: Flick Down    → col 0..3
-row 3: Flick Left    → col 0..3
-row 4: Flick Right   → col 0..3
 ```
+
+That is the whole matrix - a diamond instance has no flick rows.
 
 ## Development Standards
 
