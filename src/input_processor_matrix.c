@@ -82,24 +82,13 @@ struct zip_matrix_data {
     uint32_t contact_id;
     uint32_t hold_contact_id;
     /*
-     * One bit per INPUT_BTN_0..INPUT_BTN_15 whose press was suppressed here and
-     * whose release has not been seen yet, plus when that record was last
-     * updated.
+     * One bit per INPUT_BTN_0..INPUT_BTN_15 whose press was suppressed here
+     * and whose release has not been seen yet.
      */
     uint16_t suppressed_btns;
-    uint32_t suppressed_at;
 };
 
 #define ZIP_MATRIX_TRACKED_BTNS 16
-
-/*
- * How long a suppressed press stays on record. When the layer changes after a
- * press was suppressed here, the matching release is routed elsewhere and never
- * comes back to clear it. Without an expiry that stale bit would suppress an
- * unrelated later release - exactly the stuck button this tracking exists to
- * prevent. Generated click sequences are far shorter than this.
- */
-#define ZIP_MATRIX_SUPPRESS_TTL_MS 500
 
 /*
  * Decide whether a KEY event may be consumed.
@@ -114,6 +103,10 @@ struct zip_matrix_data {
  * Passing a release through is always safe: it cannot produce a stray press,
  * because the press it belongs to was already delivered.
  *
+ * The record is dropped on a layer change rather than expiring on a timer. That
+ * change is the only moment a press and its release can be routed apart, so it
+ * is exactly when an outstanding record can be orphaned.
+ *
  * BTN_TOUCH is excluded - this processor keeps its own touch state and consumes
  * both edges unconditionally.
  */
@@ -127,26 +120,22 @@ static bool zip_matrix_may_suppress_key(struct zip_matrix_data *data,
     }
 
     uint16_t bit = BIT(event->code - INPUT_BTN_0);
-    uint32_t now = k_uptime_get_32();
-
-    if (data->suppressed_btns &&
-        (uint32_t)(now - data->suppressed_at) > ZIP_MATRIX_SUPPRESS_TTL_MS) {
-        data->suppressed_btns = 0;
-    }
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    bool was_suppressed = (data->suppressed_btns & bit) != 0;
 
     if (event->value) {
         data->suppressed_btns |= bit;
-        data->suppressed_at = now;
-        return true;
+    } else {
+        data->suppressed_btns &= ~bit;
     }
+    k_spin_unlock(&data->lock, key);
 
-    if (!(data->suppressed_btns & bit)) {
+    if (!event->value && !was_suppressed) {
         LOG_WRN("Passing BTN_%d release: its press was not suppressed here",
                 event->code - INPUT_BTN_0);
         return false;
     }
 
-    data->suppressed_btns &= ~bit;
     return true;
 }
 
@@ -558,7 +547,6 @@ static int zip_matrix_init(const struct device *dev)
     data->contact_id = 0;
     data->hold_contact_id = 0;
     data->suppressed_btns = 0;
-    data->suppressed_at = 0;
     k_work_init_delayable(&data->hold_work, hold_work_handler);
 
     data->kscan_dev = cfg->kscan_dev;
@@ -663,6 +651,12 @@ static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
     data->flick_latched = false;
     data->flick_gesture = GESTURE_TAP;
     data->flick_max_travel = 0U;
+    /*
+     * A press suppressed here whose release is routed elsewhere would leave its
+     * bit set for good, and the next unrelated release to reach this instance
+     * would be swallowed - the stuck button the record exists to prevent.
+     */
+    data->suppressed_btns = 0;
     /*
      * Invalidate the contact so a hold_work already past its spin lock cannot
      * decide it still owns this contact and report a press.
