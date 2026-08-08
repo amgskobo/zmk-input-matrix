@@ -42,7 +42,7 @@ zip_matrix: zip_matrix {
 
     /* Optional booleans: choose the narrowest suppression that matches the pipeline. */
     /* suppress-abs; */
-    /* suppress-touch; */
+    /* suppress-btn-touch; */
     /* suppress-key; */
 };
 ```
@@ -78,7 +78,7 @@ Example for point `(1,1)` on a 3x3 grid:
 
 ## Data Flow & Thread Safety
 
-1. Event capture: `zip_matrix_handle_event` observes `INPUT_EV_ABS` and `INPUT_EV_KEY`. `suppress-abs` consumes every `INPUT_EV_ABS` event after internal state is updated. `suppress-touch` consumes only `INPUT_BTN_TOUCH`. `suppress-key` consumes every `INPUT_EV_KEY` event, including touchpad button gestures.
+1. Event capture: `zip_matrix_handle_event` observes `INPUT_EV_ABS` and `INPUT_EV_KEY`. `suppress-abs` consumes every `INPUT_EV_ABS` event after internal state is updated. `suppress-btn-touch` consumes only `INPUT_BTN_TOUCH`. `suppress-key` consumes every `INPUT_EV_KEY` event, including touchpad button gestures.
 2. Coordinate buffering: `INPUT_ABS_X` and `INPUT_ABS_Y` update `current_x/current_y`. Completed contacts reset these fields to `COORD_UNINITIALIZED` so the next touch cannot latch stale coordinates.
 3. Start latching: the first sync while touch is active latches `start_x/start_y`, but only after both coordinates are initialized. If no coordinates arrive, no gesture is emitted.
 4. Flick qualification: after the start point is latched, each sync compares squared travel against the squared threshold. Travel is true distance, so the boundary is a circle. The first crossing cancels the pending tap-hold timer; the contact keeps being tracked afterwards and the direction is re-read whenever a farther point is reached, so the reported direction comes from the longest vector of the stroke rather than the shortest one.

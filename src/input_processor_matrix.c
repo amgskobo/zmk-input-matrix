@@ -48,7 +48,7 @@ struct zip_matrix_config {
     uint16_t flick_threshold;
     uint16_t long_press_ms;
     bool suppress_abs;
-    bool suppress_touch;
+    bool suppress_btn_touch;
     bool suppress_key;
 #if ZIP_MATRIX_USE_DIAMOND_TAP
     bool diamond_tap;
@@ -426,7 +426,7 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
 
             k_spin_unlock(&data->lock, key);
         }
-        if ((cfg->suppress_key || (cfg->suppress_touch && event->code == INPUT_BTN_TOUCH)) &&
+        if ((cfg->suppress_key || (cfg->suppress_btn_touch && event->code == INPUT_BTN_TOUCH)) &&
             zip_matrix_may_suppress_key(data, event)) {
             event->code = COORD_INVALID_ZERO;
             event->sync = false;
@@ -625,7 +625,7 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
         .rows = DT_INST_PROP(n, rows), .columns = DT_INST_PROP(n, columns), \
         .x = DT_INST_PROP(n, x), .y = DT_INST_PROP(n, y), \
         .flick_threshold = DT_INST_PROP(n, flick_threshold), .long_press_ms = DT_INST_PROP(n, long_press_ms), \
-        .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_touch = DT_INST_PROP(n, suppress_touch), \
+        .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_btn_touch = DT_INST_PROP(n, suppress_btn_touch), \
         .suppress_key = DT_INST_PROP(n, suppress_key), \
         ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
         .kscan_dev = DEVICE_DT_GET(DT_INST_PHANDLE(n, kscan)), \

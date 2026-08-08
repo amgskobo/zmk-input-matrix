@@ -42,7 +42,7 @@ properties:
       If true, consume all INPUT_EV_ABS events seen by this processor, not only
       INPUT_ABS_X and INPUT_ABS_Y. This prevents ABS pointer events from reaching
       later processors or the mouse HID.
-  suppress-touch:
+  suppress-btn-touch:
     type: boolean
     description: |
       If true, consume only INPUT_BTN_TOUCH after this processor updates its
