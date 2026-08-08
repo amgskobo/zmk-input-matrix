@@ -169,7 +169,7 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 | `kscan` | phandle | 必須 | ジェスチャイベントを受け取る `zmk,kscan-input-matrix` プロキシ |
 | `long-press-ms` | int | 200 | Tap ホールド時間（ミリ秒）、0 で無効化 |
 | `suppress-abs` | bool | false | X/Y だけでなく、すべての `INPUT_EV_ABS` イベントを抑制 |
-| `suppress-touch` | bool | false | `INPUT_BTN_TOUCH` のみ抑制 |
+| `suppress-btn-touch` | bool | false | `INPUT_BTN_TOUCH` のみ抑制 |
 | `suppress-key` | bool | false | タッチパッド由来のボタンイベントも含め、すべての `INPUT_EV_KEY` イベントを抑制 |
 | `diamond-tap` | bool | false | Tap のみを報告し、1×4 グリッドを D-pad 風のダイヤモンド領域に分割 |
 
