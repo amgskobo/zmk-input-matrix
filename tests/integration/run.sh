@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The ZMK Input Matrix Contributors
+# Copyright (c) 2026 amgskobo
 # SPDX-License-Identifier: MIT
 
 set -euo pipefail

@@ -52,11 +52,11 @@ ZMK の設定ファイル `config/west.yml` に本プロジェクトを追加し
 ```yaml
 manifest:
   remotes:
-    - name: module-source
+    - name: amgskobo
       url-base: https://github.com/amgskobo
   projects:
     - name: zmk-input-matrix
-      remote: module-source
+      remote: amgskobo
       revision: main
 ```
 

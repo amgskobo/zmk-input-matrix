@@ -54,11 +54,11 @@ Add this module to your project's `config/west.yml` file.
 ```yaml
 manifest:
   remotes:
-    - name: module-source
+    - name: amgskobo
       url-base: https://github.com/amgskobo
   projects:
     - name: zmk-input-matrix
-      remote: module-source
+      remote: amgskobo
       revision: main
 ```
 
