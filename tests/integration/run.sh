@@ -52,7 +52,7 @@ else
     grep -q '^CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y' \
         "$work_dir/build/zephyr/.config"
     strings "$work_dir/build/zephyr/zmk.elf" >"$work_dir/build/zephyr/strings.txt"
-    grep -Fxq zip__matrix "$work_dir/build/zephyr/strings.txt"
+    grep -Fxq amgskobo__matrix "$work_dir/build/zephyr/strings.txt"
     grep -Fxq matrix.suppress_btn_touch "$work_dir/build/zephyr/strings.txt"
     grep -Fxq matrix.flick_threshold "$work_dir/build/zephyr/strings.txt"
 fi

@@ -31,7 +31,7 @@ matrix processor node を複製する必要もありません。
 ## ランタイム設定
 
 `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y` を有効にすると、DYA Studio の
-`zip__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
+`amgskobo__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
 `flick_threshold`、`long_press_ms`、`suppress_abs`、`suppress_btn_touch`、
 `suppress_key` です。永続化は custom-settings registry だけが担当します。
 設定更新時は全 listener stream を無効化し、報告済み hold を解放、保留中の work を

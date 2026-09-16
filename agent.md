@@ -65,7 +65,7 @@ every listener stream.
 ### DYA custom settings
 
 When `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, the module registers
-`zip__matrix` and publishes one setting set per processor instance.
+`amgskobo__matrix` and publishes one setting set per processor instance.
 Persistence is owned exclusively by `zmk-feature-custom-settings`; the matrix
 driver holds only live values.
 

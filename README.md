@@ -32,7 +32,7 @@ matrix processor nodes.
 ## Runtime settings
 
 With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, DYA Studio exposes each
-instance under `zip__matrix`. The editable values are `enabled`,
+instance under `amgskobo__matrix`. The editable values are `enabled`,
 `flick_threshold`, `long_press_ms`, `suppress_abs`, `suppress_btn_touch`, and
 `suppress_key`. The registry owns persistence. A settings update invalidates
 every listener stream; a reported hold is released, pending work is cancelled,
