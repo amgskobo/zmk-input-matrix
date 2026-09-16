@@ -1,6 +1,16 @@
 # ZMK Input Matrix (zip_matrix)
 
+[![Test](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a configurable gesture grid with long-press support. Gestures are reported as standard KSCAN matrix events for full ZMK Studio compatibility.
+
+## Compatibility
+
+The module is continuously compile-tested against both upstream ZMK `main`
+and Cormoran's `main+dya`. Core gesture processing works on either tree. The
+runtime-settings UI is optional and is enabled only on a tree that provides
+`zmk-feature-custom-settings`, such as `main+dya`.
 
 ## Features
 
@@ -8,9 +18,34 @@ A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a con
 - **Block Layout**: Each gesture (Tap/Up/Down/Left/Right) gets a full block stacked vertically
 - **SYN-Based Latching**: Coordinates are latched on `INPUT_SYN_REPORT` for stable start positions
 - **Long-Press Support**: Configurable tap-hold duration (set `0` to disable)
-- **Layer-Change Safe**: A held cell is released, and a pending hold cancelled, when the layer changes out from under the contact
+- **Layer-Change Safe**: A held cell is released, a pending hold cancelled, and the contact closed out, when the layer changes out from under it
 - **Split Keyboard Ready**: Optimized for central-side processing
 - **Thread-Safe**: Uses spinlocks to prevent race conditions
+
+One processor node may be shared by multiple ZMK input listeners. Configuration
+and the output KSCAN device belong to the node, while contact coordinates,
+flick detection, hold work, contact generations, and suppressed-button records
+belong to `input_device_index`. Local and split-proxied pads therefore cannot
+overwrite each other's in-progress gesture state and do not need duplicate
+matrix processor nodes.
+
+## Runtime settings
+
+With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, DYA Studio exposes each
+instance under `amgskobo__matrix`. The editable values are `enabled`,
+`flick_threshold`, `long_press_ms`, `suppress_abs`, `suppress_btn_touch`, and
+`suppress_key`. The registry owns persistence. A settings update invalidates
+every listener stream; a reported hold is released, pending work is cancelled,
+and an input event overlapping the update is discarded instead of being
+processed with mixed parameters.
+
+`rows`, `columns`, `kscan`, and `diamond-tap` remain devicetree-only because
+they define the virtual matrix and keymap layout rather than live tuning.
+
+Setting keys begin with the devicetree node name. Keep custom instance node
+names short enough for Zephyr's persisted-settings limit. The module checks
+both the RPC key and full storage name at compile time, so an unsafe name fails
+the build instead of accepting a value that cannot be saved.
 
 ## Installation
 
@@ -26,6 +61,25 @@ manifest:
       remote: amgskobo
       revision: main
 ```
+
+For DYA runtime settings, also include `zmk-feature-custom-settings` in the
+manifest and enable the integration in the central-side configuration:
+
+```yaml
+  remotes:
+    - name: cormoran
+      url-base: https://github.com/cormoran
+  projects:
+    - name: zmk-feature-custom-settings
+      remote: cormoran
+      revision: main
+```
+
+```conf
+CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y
+```
+
+This option is not required for normal devicetree-only operation.
 
 ## Quick Start
 
@@ -96,7 +150,10 @@ Layer changes are watched directly so that cannot leave anything behind:
 
 - A cell this instance has already pressed is released.
 - A hold that is only pending is cancelled, so the timer cannot fire after the layer has changed and press a cell nothing can then release.
+- The contact is closed out - the touch state and the buffered coordinates go the same way as the start point. A contact left marked active with its start cleared is the exact shape the sync path reads as a stroke beginning, so it would latch a new start and re-arm the hold that was just cancelled.
 - The record of which suppressed presses are still outstanding is dropped, so a later unrelated release cannot be swallowed in their place.
+
+The event fires on every layer change, including the ones that leave this processor in the chain - a layer key on the keyboard pressed while a finger is on the pad, say. A contact in progress is dropped either way: the pad stays inert until the finger is lifted and placed again.
 
 `suppress-key` never drops a release whose press was not suppressed here. Passing a release through is always safe - the press it belongs to already reached the host - while dropping one would leave that button held down with nothing left to release it.
 

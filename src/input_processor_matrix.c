@@ -13,11 +13,13 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/spinlock.h>
 #include <drivers/input_processor.h>
 #include <kscan_input_matrix.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/layer_state_changed.h>
+#include <zmk-input-matrix/matrix_runtime.h>
 
 LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
 
@@ -29,6 +31,8 @@ LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
 #define ZIP_MATRIX_MAX_GRID_COLUMNS UINT8_MAX
 #define ZIP_MATRIX_MAX_COORD (UINT16_MAX - 1U)
 #define ZIP_MATRIX_MAX_U16 UINT16_MAX
+#define ZIP_MATRIX_LISTENER_COUNT DT_NUM_INST_STATUS_OKAY(zmk_input_listener)
+#define ZIP_MATRIX_STREAM_COUNT MAX(ZIP_MATRIX_LISTENER_COUNT, 1)
 
 #define ZIP_MATRIX_USE_DIAMOND_TAP DT_ANY_INST_HAS_PROP_STATUS_OKAY(diamond_tap)
 
@@ -56,9 +60,11 @@ struct zip_matrix_config {
     const struct device *kscan_dev;
 };
 
-struct zip_matrix_data {
+struct zip_matrix_data;
+
+struct zip_matrix_stream {
     struct k_spinlock lock;
-    const struct zip_matrix_config *config;
+    struct zip_matrix_data *owner;
     uint16_t current_x;
     uint16_t current_y;
     bool is_btn_touch;
@@ -86,7 +92,40 @@ struct zip_matrix_data {
      * and whose release has not been seen yet.
      */
     uint16_t suppressed_btns;
+    atomic_t applied_generation;
 };
+
+struct zip_matrix_data {
+    const struct zip_matrix_config *config;
+    const struct device *kscan_dev;
+    struct k_spinlock params_lock;
+    struct zip_matrix_runtime_params params;
+    atomic_t reset_generation;
+    struct zip_matrix_stream streams[ZIP_MATRIX_STREAM_COUNT];
+};
+
+static struct zip_matrix_runtime_params zip_matrix_params_snapshot(struct zip_matrix_data *data)
+{
+    k_spinlock_key_t key = k_spin_lock(&data->params_lock);
+    struct zip_matrix_runtime_params params = data->params;
+
+    k_spin_unlock(&data->params_lock, key);
+    return params;
+}
+
+static struct zip_matrix_config
+zip_matrix_live_config(const struct zip_matrix_data *data,
+                       const struct zip_matrix_runtime_params *params)
+{
+    struct zip_matrix_config config = *data->config;
+
+    config.flick_threshold = params->flick_threshold;
+    config.long_press_ms = params->long_press_ms;
+    config.suppress_abs = params->suppress_abs;
+    config.suppress_btn_touch = params->suppress_btn_touch;
+    config.suppress_key = params->suppress_key;
+    return config;
+}
 
 #define ZIP_MATRIX_TRACKED_BTNS 16
 
@@ -110,7 +149,7 @@ struct zip_matrix_data {
  * BTN_TOUCH is excluded - this processor keeps its own touch state and consumes
  * both edges unconditionally.
  */
-static bool zip_matrix_may_suppress_key(struct zip_matrix_data *data,
+static bool zip_matrix_may_suppress_key(struct zip_matrix_stream *stream,
                                         const struct input_event *event)
 {
     if (event->code == INPUT_BTN_TOUCH ||
@@ -120,15 +159,15 @@ static bool zip_matrix_may_suppress_key(struct zip_matrix_data *data,
     }
 
     uint16_t bit = BIT(event->code - INPUT_BTN_0);
-    k_spinlock_key_t key = k_spin_lock(&data->lock);
-    bool was_suppressed = (data->suppressed_btns & bit) != 0;
+    k_spinlock_key_t key = k_spin_lock(&stream->lock);
+    bool was_suppressed = (stream->suppressed_btns & bit) != 0;
 
     if (event->value) {
-        data->suppressed_btns |= bit;
+        stream->suppressed_btns |= bit;
     } else {
-        data->suppressed_btns &= ~bit;
+        stream->suppressed_btns &= ~bit;
     }
-    k_spin_unlock(&data->lock, key);
+    k_spin_unlock(&stream->lock, key);
 
     if (!event->value && !was_suppressed) {
         LOG_WRN("Passing BTN_%d release: its press was not suppressed here",
@@ -298,58 +337,63 @@ static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, i
  */
 static void hold_work_handler(struct k_work *work)
 {
-    struct zip_matrix_data *data = CONTAINER_OF(work, struct zip_matrix_data, hold_work.work);
-    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    struct zip_matrix_stream *stream =
+        CONTAINER_OF(work, struct zip_matrix_stream, hold_work.work);
+    struct zip_matrix_data *data = stream->owner;
+    struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(data);
+    struct zip_matrix_config config = zip_matrix_live_config(data, &params);
+    k_spinlock_key_t key = k_spin_lock(&stream->lock);
     bool trigger = false;
     uint8_t r = 0;
     uint8_t c = 0;
     uint32_t work_contact_id = 0;
 
-    if (data->is_btn_touch && !data->is_holding && !data->flick_latched &&
-        data->start_x != COORD_UNINITIALIZED) {
-        calculate_kscan_coordinates(data->config, data->start_x, data->start_y, GESTURE_TAP,
-                                    &data->hold_row, &data->hold_column);
-        data->is_holding = true;
-        data->hold_reported = false;
-        data->hold_release_pending = false;
-        data->hold_contact_id = data->contact_id;
-        r = data->hold_row;
-        c = data->hold_column;
-        work_contact_id = data->hold_contact_id;
+    if (params.enabled && stream->is_btn_touch && !stream->is_holding && !stream->flick_latched &&
+        stream->start_x != COORD_UNINITIALIZED) {
+        calculate_kscan_coordinates(&config, stream->start_x, stream->start_y, GESTURE_TAP,
+                                    &stream->hold_row, &stream->hold_column);
+        stream->is_holding = true;
+        stream->hold_reported = false;
+        stream->hold_release_pending = false;
+        stream->hold_contact_id = stream->contact_id;
+        r = stream->hold_row;
+        c = stream->hold_column;
+        work_contact_id = stream->hold_contact_id;
         trigger = true;
     }
 
-    k_spin_unlock(&data->lock, key);
+    k_spin_unlock(&stream->lock, key);
 
     if (trigger) {
         zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, true);
-        k_spinlock_key_t k2 = k_spin_lock(&data->lock);
-        bool same_hold = data->is_holding && data->hold_contact_id == work_contact_id;
-        bool same_contact = data->contact_id == work_contact_id;
+        k_spinlock_key_t k2 = k_spin_lock(&stream->lock);
+        bool same_hold = stream->is_holding && stream->hold_contact_id == work_contact_id;
+        bool same_contact = stream->contact_id == work_contact_id;
         bool release_after_press = !same_hold;
 
         if (same_hold) {
-            data->hold_reported = true;
-            release_after_press = data->hold_release_pending || !data->is_btn_touch || !same_contact;
+            stream->hold_reported = true;
+            release_after_press =
+                stream->hold_release_pending || !stream->is_btn_touch || !same_contact;
         }
 
         if (same_hold && release_after_press) {
-            data->is_holding = false;
-            data->hold_reported = false;
-            data->hold_release_pending = false;
+            stream->is_holding = false;
+            stream->hold_reported = false;
+            stream->hold_release_pending = false;
             if (same_contact) {
-                data->start_x = COORD_UNINITIALIZED;
-                data->start_y = COORD_UNINITIALIZED;
-                data->flick_latched = false;
-                data->flick_gesture = GESTURE_TAP;
-                data->flick_max_travel = 0U;
-                if (!data->is_btn_touch) {
-                    data->current_x = COORD_UNINITIALIZED;
-                    data->current_y = COORD_UNINITIALIZED;
+                stream->start_x = COORD_UNINITIALIZED;
+                stream->start_y = COORD_UNINITIALIZED;
+                stream->flick_latched = false;
+                stream->flick_gesture = GESTURE_TAP;
+                stream->flick_max_travel = 0U;
+                if (!stream->is_btn_touch) {
+                    stream->current_x = COORD_UNINITIALIZED;
+                    stream->current_y = COORD_UNINITIALIZED;
                 }
             }
         }
-        k_spin_unlock(&data->lock, k2);
+        k_spin_unlock(&stream->lock, k2);
 
         if (release_after_press) {
             zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, false);
@@ -357,11 +401,72 @@ static void hold_work_handler(struct k_work *work)
     }
 }
 
+static struct zip_matrix_stream *
+stream_for_event(struct zip_matrix_data *data, const struct zmk_input_processor_state *state)
+{
+    if (state == NULL) {
+        return &data->streams[0];
+    }
+
+    if (state->input_device_index >= ZIP_MATRIX_STREAM_COUNT) {
+        LOG_ERR("Input device index %u exceeds the %u allocated matrix streams",
+                state->input_device_index, ZIP_MATRIX_STREAM_COUNT);
+        return NULL;
+    }
+
+    return &data->streams[state->input_device_index];
+}
+
+static void zip_matrix_resync_stream(struct zip_matrix_data *data,
+                                     struct zip_matrix_stream *stream,
+                                     atomic_val_t generation)
+{
+    k_spinlock_key_t key = k_spin_lock(&stream->lock);
+    bool release = stream->is_holding && stream->hold_reported;
+    uint8_t row = stream->hold_row;
+    uint8_t column = stream->hold_column;
+
+    stream->is_holding = false;
+    stream->hold_reported = false;
+    stream->hold_release_pending = false;
+    stream->is_btn_touch = false;
+    stream->current_x = COORD_UNINITIALIZED;
+    stream->current_y = COORD_UNINITIALIZED;
+    stream->start_x = COORD_UNINITIALIZED;
+    stream->start_y = COORD_UNINITIALIZED;
+    stream->flick_latched = false;
+    stream->flick_gesture = GESTURE_TAP;
+    stream->flick_max_travel = 0U;
+    stream->suppressed_btns = 0U;
+    stream->contact_id++;
+    atomic_set(&stream->applied_generation, generation);
+    k_spin_unlock(&stream->lock, key);
+
+    (void)k_work_cancel_delayable(&stream->hold_work);
+    if (release) {
+        zmk_kscan_matrix_report_event(data->kscan_dev, row, column, false);
+    }
+}
+
 static int zip_matrix_handle_event(const struct device *dev, struct input_event *event,
                                    uint32_t p1, uint32_t p2, struct zmk_input_processor_state *state)
 {
-    struct zip_matrix_data *data = dev->data;
-    const struct zip_matrix_config *cfg = data->config;
+    struct zip_matrix_data *owner = dev->data;
+    struct zip_matrix_stream *data = stream_for_event(owner, state);
+
+    if (data == NULL) {
+        return ZMK_INPUT_PROC_CONTINUE;
+    }
+
+    atomic_val_t generation_before = atomic_get(&owner->reset_generation);
+
+    if (atomic_get(&data->applied_generation) != generation_before) {
+        zip_matrix_resync_stream(owner, data, generation_before);
+    }
+
+    struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(owner);
+    struct zip_matrix_config live_config = zip_matrix_live_config(owner, &params);
+    const struct zip_matrix_config *cfg = &live_config;
     int ret = ZMK_INPUT_PROC_CONTINUE;
     bool is_sync = event->sync;
     bool cancel_hold = false;
@@ -376,7 +481,10 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
 
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
-    ARG_UNUSED(state);
+
+    if (!params.enabled) {
+        return ZMK_INPUT_PROC_CONTINUE;
+    }
 
     switch (event->type) {
     case INPUT_EV_ABS:
@@ -515,6 +623,15 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
     }
 
 report_events:
+    ;
+    atomic_val_t generation_after = atomic_get(&owner->reset_generation);
+    if (generation_after != generation_before) {
+        zip_matrix_resync_stream(owner, data, generation_after);
+        event->code = COORD_INVALID_ZERO;
+        event->sync = false;
+        return ZMK_INPUT_PROC_STOP;
+    }
+
     if (cancel_hold) {
         k_work_cancel_delayable(&data->hold_work);
     }
@@ -524,14 +641,14 @@ report_events:
     }
 
     if (release_stale_hold || report_release) {
-        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)release_row, (uint32_t)release_column,
+        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)release_row, (uint32_t)release_column,
                                       false);
     }
 
     if (report_gesture) {
-        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
+        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
                                       true);
-        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
+        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
                                       false);
     }
 
@@ -546,23 +663,39 @@ static int zip_matrix_init(const struct device *dev)
     if (cfg->rows == 0 || cfg->columns == 0 || cfg->x == 0 || cfg->y == 0) return -EINVAL;
 
     data->config = cfg;
-    data->current_x = COORD_UNINITIALIZED;
-    data->current_y = COORD_UNINITIALIZED;
-    data->start_x = COORD_UNINITIALIZED;
-    data->start_y = COORD_UNINITIALIZED;
-    data->is_btn_touch = false;
-    data->is_holding = false;
-    data->hold_reported = false;
-    data->hold_release_pending = false;
-    data->flick_latched = false;
-    data->flick_gesture = GESTURE_TAP;
-    data->flick_max_travel = 0U;
-    data->contact_id = 0;
-    data->hold_contact_id = 0;
-    data->suppressed_btns = 0;
-    k_work_init_delayable(&data->hold_work, hold_work_handler);
-
     data->kscan_dev = cfg->kscan_dev;
+    data->params = (struct zip_matrix_runtime_params){
+        .enabled = true,
+        .flick_threshold = cfg->flick_threshold,
+        .long_press_ms = cfg->long_press_ms,
+        .suppress_abs = cfg->suppress_abs,
+        .suppress_btn_touch = cfg->suppress_btn_touch,
+        .suppress_key = cfg->suppress_key,
+    };
+    atomic_set(&data->reset_generation, 0);
+
+    for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
+        struct zip_matrix_stream *stream = &data->streams[i];
+
+        stream->owner = data;
+        stream->current_x = COORD_UNINITIALIZED;
+        stream->current_y = COORD_UNINITIALIZED;
+        stream->start_x = COORD_UNINITIALIZED;
+        stream->start_y = COORD_UNINITIALIZED;
+        stream->is_btn_touch = false;
+        stream->is_holding = false;
+        stream->hold_reported = false;
+        stream->hold_release_pending = false;
+        stream->flick_latched = false;
+        stream->flick_gesture = GESTURE_TAP;
+        stream->flick_max_travel = 0U;
+        stream->contact_id = 0;
+        stream->hold_contact_id = 0;
+        stream->suppressed_btns = 0;
+        atomic_set(&stream->applied_generation, 0);
+        k_work_init_delayable(&stream->hold_work, hold_work_handler);
+    }
+
     return 0;
 }
 
@@ -634,6 +767,57 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
 
 DT_INST_FOREACH_STATUS_OKAY(ZIP_MATRIX_INST)
 
+#define ZIP_MATRIX_DEVICE_REF(n) DEVICE_DT_INST_GET(n),
+
+static const struct device *const zip_matrix_devices[] = {
+    DT_INST_FOREACH_STATUS_OKAY(ZIP_MATRIX_DEVICE_REF)};
+
+static bool zip_matrix_device_valid(const struct device *dev)
+{
+    for (size_t i = 0U; i < ARRAY_SIZE(zip_matrix_devices); i++) {
+        if (zip_matrix_devices[i] == dev) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int zip_matrix_get_params(const struct device *dev, struct zip_matrix_runtime_params *out)
+{
+    if (dev == NULL || out == NULL) {
+        return -EINVAL;
+    }
+    if (!zip_matrix_device_valid(dev)) {
+        return -ENODEV;
+    }
+
+    *out = zip_matrix_params_snapshot(dev->data);
+    return 0;
+}
+
+int zip_matrix_set_params(const struct device *dev,
+                          const struct zip_matrix_runtime_params *params)
+{
+    if (dev == NULL || params == NULL || params->flick_threshold == 0U) {
+        return -EINVAL;
+    }
+    if (!zip_matrix_device_valid(dev)) {
+        return -ENODEV;
+    }
+
+    struct zip_matrix_data *data = dev->data;
+    k_spinlock_key_t key = k_spin_lock(&data->params_lock);
+    data->params = *params;
+    k_spin_unlock(&data->params_lock, key);
+
+    atomic_val_t generation = atomic_inc(&data->reset_generation) + 1;
+    for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
+        zip_matrix_resync_stream(data, &data->streams[i], generation);
+    }
+    return 0;
+}
+
 /*
  * Release a reported hold that can no longer be released by the normal path.
  *
@@ -650,40 +834,11 @@ DT_INST_FOREACH_STATUS_OKAY(ZIP_MATRIX_INST)
  */
 static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
 {
-    struct zip_matrix_data *data = dev->data;
-    k_spinlock_key_t key = k_spin_lock(&data->lock);
-    bool release = data->is_holding && data->hold_reported;
-    uint8_t r = data->hold_row;
-    uint8_t c = data->hold_column;
+    struct zip_matrix_data *owner = dev->data;
+    atomic_val_t generation = atomic_inc(&owner->reset_generation) + 1;
 
-    data->is_holding = false;
-    data->hold_reported = false;
-    data->hold_release_pending = false;
-    data->start_x = COORD_UNINITIALIZED;
-    data->start_y = COORD_UNINITIALIZED;
-    data->flick_latched = false;
-    data->flick_gesture = GESTURE_TAP;
-    data->flick_max_travel = 0U;
-    /*
-     * A press suppressed here whose release is routed elsewhere would leave its
-     * bit set for good, and the next unrelated release to reach this instance
-     * would be swallowed - the stuck button the record exists to prevent.
-     */
-    data->suppressed_btns = 0;
-    /*
-     * Invalidate the contact so a hold_work already past its spin lock cannot
-     * decide it still owns this contact and report a press.
-     */
-    data->contact_id++;
-
-    k_spin_unlock(&data->lock, key);
-
-    /* Drop a pending hold whether or not one was already reported. */
-    k_work_cancel_delayable(&data->hold_work);
-
-    if (release) {
-        LOG_WRN("Releasing held cell %u,%u: layer changed while it was down", r, c);
-        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, false);
+    for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
+        zip_matrix_resync_stream(owner, &owner->streams[i], generation);
     }
 }
 
