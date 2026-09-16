@@ -1,6 +1,16 @@
 # ZMK Input Matrix (zip_matrix)
 
+[![Test](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 トラックパッドの絶対座標（X/Y）を、設定可能なジェスチャグリッドに変換する ZMK 入力プロセッサです。長押しに対応し、ジェスチャは標準的な KSCAN マトリクスイベントとして報告されるため、ZMK Studio と完全に互換性があります。
+
+## 互換性
+
+upstream ZMK の `main` と DYA fork の `main+dya` の両方で継続的に
+コンパイルテストします。gesture処理本体はどちらでも使用できます。ランタイム設定UIは
+任意機能であり、`main+dya` など `zmk-feature-custom-settings` を提供する構成でのみ
+有効にします。
 
 ## 特徴
 
@@ -8,9 +18,32 @@
 - **ブロック配置**: 各ジェスチャ（Tap / Up / Down / Left / Right）が独立したブロックとして垂直に積層
 - **SYN ラッチ**: 座標を `INPUT_SYN_REPORT` でラッチし、安定した開始点を確定
 - **長押し対応**: Tap ホールド時間を設定可能（0 で無効化）
-- **レイヤ変更に対して安全**: 接触の途中でレイヤが変わっても、押下済みのセルは解放され、保留中のホールドはキャンセルされます
+- **レイヤ変更に対して安全**: 接触の途中でレイヤが変わっても、押下済みのセルは解放され、保留中のホールドはキャンセルされ、接触自体も終了扱いになります
 - **分割キーボード対応**: セントラル側での処理に最適化
 - **スレッドセーフ**: スピンロックにより競合状態を防止
+
+1つのプロセッサ node を複数の ZMK input listener で共有できます。設定と出力先
+KSCAN device は node に属しますが、接触座標、flick 判定、hold work、contact
+generation、抑制済みボタン記録は `input_device_index` ごとに独立します。そのため、
+local と split 経由の pad が進行中の gesture 状態を上書きすることはなく、左右専用の
+matrix processor node を複製する必要もありません。
+
+## ランタイム設定
+
+`CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y` を有効にすると、DYA Studio の
+`amgskobo__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
+`flick_threshold`、`long_press_ms`、`suppress_abs`、`suppress_btn_touch`、
+`suppress_key` です。永続化は custom-settings registry だけが担当します。
+設定更新時は全 listener stream を無効化し、報告済み hold を解放、保留中の work を
+キャンセルします。更新と重なった入力イベントは新旧設定を混在させず破棄します。
+
+`rows`、`columns`、`kscan`、`diamond-tap` は virtual matrix と keymap の構造を
+決めるため、devicetree 固定です。
+
+設定キーの先頭には devicetree node 名を使用します。Zephyrの永続化名上限に収まる
+短いnode名を使用してください。RPCキーと保存時の完全な名前はコンパイル時に検査される
+ため、保存できない設定を一度受理して後から失うのではなく、該当する構成のビルドを
+明示的に停止します。
 
 ## インストール
 
@@ -26,6 +59,25 @@ manifest:
       remote: amgskobo
       revision: main
 ```
+
+DYAのランタイム設定を使用する場合は、manifestへ
+`zmk-feature-custom-settings` も追加し、central側の設定で連携を有効にします。
+
+```yaml
+  remotes:
+    - name: dya-source
+      url-base: https://github.com/cormoran
+  projects:
+    - name: zmk-feature-custom-settings
+      remote: dya-source
+      revision: main
+```
+
+```conf
+CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y
+```
+
+devicetreeの固定設定だけで使用する場合、このオプションは不要です。
 
 ## クイックスタート
 
@@ -86,7 +138,10 @@ manifest:
 
 - このインスタンスが既に押下したセルは解放されます。
 - 保留中のホールドはキャンセルされます。そうしないと、レイヤが変わった後にタイマーが発火し、誰も解放できないセルを押してしまいます。
+- 接触自体も終了扱いにします。開始点と一緒に、タッチ状態とバッファ済み座標も破棄します。接触が有効なまま開始点だけ消えた状態は、SYN 処理が「ストロークの開始」と読む形そのものなので、そのままでは開始点を latch し直し、キャンセルしたばかりのホールドを予約し直してしまいます。
 - 抑制済みの押下の記録は破棄されます。そうしないと、後から届いた無関係な release が代わりに飲み込まれます。
+
+このイベントは**すべてのレイヤ変更**で発火します。このプロセッサがチェーンに残る変更（パッドに指を置いたままキーボード側のレイヤキーに触った場合など）でも同じです。いずれにせよ進行中の接触は破棄され、指を上げて置き直すまでこのインスタンスは反応しません。
 
 `suppress-key` は、**ここで抑制していない押下に対応する release は決して破棄しません**。release を通すことは常に安全です（対応する押下は既にホストへ届いている）が、破棄するとそのボタンが押しっぱなしのまま解放手段を失います。
 

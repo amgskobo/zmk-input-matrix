@@ -1,0 +1,97 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <physical_layouts.dtsi>
+#include <dt-bindings/zmk/matrix_transform.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+    chosen {
+        zmk,kscan = &matrix_kscan;
+        zmk,physical-layout = &matrix_layout;
+    };
+
+    matrix_kscan: matrix_kscan {
+        compatible = "zmk,kscan-input-matrix";
+        rows = <5>;
+        columns = <2>;
+    };
+
+    matrix_transform: matrix_transform {
+        compatible = "zmk,matrix-transform";
+        rows = <5>;
+        columns = <2>;
+        map = <
+            RC(0, 0) RC(0, 1)
+            RC(1, 0) RC(1, 1)
+            RC(2, 0) RC(2, 1)
+            RC(3, 0) RC(3, 1)
+            RC(4, 0) RC(4, 1)
+        >;
+    };
+
+    matrix_layout: matrix_layout {
+        compatible = "zmk,physical-layout";
+        display-name = "Matrix test";
+        transform = <&matrix_transform>;
+        keys = <
+            &key_physical_attrs 100 100   0   0 0 0 0
+            &key_physical_attrs 100 100 100   0 0 0 0
+            &key_physical_attrs 100 100   0 100 0 0 0
+            &key_physical_attrs 100 100 100 100 0 0 0
+            &key_physical_attrs 100 100   0 200 0 0 0
+            &key_physical_attrs 100 100 100 200 0 0 0
+            &key_physical_attrs 100 100   0 300 0 0 0
+            &key_physical_attrs 100 100 100 300 0 0 0
+            &key_physical_attrs 100 100   0 400 0 0 0
+            &key_physical_attrs 100 100 100 400 0 0 0
+        >;
+    };
+
+    matrix_source_left: matrix_source_left {
+        compatible = "zmk,input-mock";
+        event-period = <100>;
+        events = <
+            INPUT_EV_ABS INPUT_ABS_X 100 0
+            INPUT_EV_ABS INPUT_ABS_Y 100 0
+            INPUT_EV_KEY INPUT_BTN_TOUCH 1 1
+        >;
+    };
+
+    matrix_source_right: matrix_source_right {
+        compatible = "zmk,input-mock";
+        event-period = <100>;
+        events = <
+            INPUT_EV_ABS INPUT_ABS_X 900 0
+            INPUT_EV_ABS INPUT_ABS_Y 900 0
+            INPUT_EV_KEY INPUT_BTN_TOUCH 1 1
+        >;
+    };
+
+    matrix: matrix {
+        compatible = "zmk,input-processor-matrix";
+        #input-processor-cells = <0>;
+        rows = <1>;
+        columns = <2>;
+        x = <1024>;
+        y = <1024>;
+        flick-threshold = <50>;
+        long-press-ms = <300>;
+        suppress-btn-touch;
+        kscan = <&matrix_kscan>;
+    };
+
+    matrix_listener_left {
+        compatible = "zmk,input-listener";
+        device = <&matrix_source_left>;
+        input-processors = <&matrix>;
+    };
+
+    matrix_listener_right {
+        compatible = "zmk,input-listener";
+        device = <&matrix_source_right>;
+        input-processors = <&matrix>;
+    };
+};

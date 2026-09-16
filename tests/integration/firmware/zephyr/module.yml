@@ -1,0 +1,8 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
+name: zmk-input-matrix-test-fixture
+build:
+  settings:
+    board_root: .
+    dts_root: .

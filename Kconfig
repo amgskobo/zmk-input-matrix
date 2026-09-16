@@ -22,3 +22,12 @@ config ZMK_KSCAN_INPUT_MATRIX
       Enable the KSCAN proxy driver for the Input Processor Matrix.
       This virtual KSCAN device receives events from the ZIP Matrix processor
       and reports them as standard matrix events.
+
+config ZMK_INPUT_MATRIX_CUSTOM_SETTINGS
+    bool "Publish matrix tuning through zmk-feature-custom-settings"
+    depends on ZMK_INPUT_PROCESSOR_MATRIX
+    depends on ZMK_CUSTOM_SETTINGS_STUDIO_RPC
+    help
+      Publishes the enable switch, flick threshold, long-press delay and input
+      suppression flags through the shared custom-settings registry. The
+      registry owns persistence; the processor keeps only the live values.
