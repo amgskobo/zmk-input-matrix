@@ -65,7 +65,7 @@ every listener stream.
 ### DYA custom settings
 
 When `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, the module registers
-`amgskobo__matrix` and publishes one setting set per processor instance.
+`zip__matrix` and publishes one setting set per processor instance.
 Persistence is owned exclusively by `zmk-feature-custom-settings`; the matrix
 driver holds only live values.
 
@@ -187,7 +187,7 @@ continue building without the DYA custom-settings dependency.
 `.github/workflows/test.yml` builds the integration fixture against:
 
 - upstream `zmkfirmware/zmk` `main`;
-- Cormoran `main+dya` with custom settings enabled.
+- the DYA fork's `main+dya` with custom settings enabled.
 
 The fixture deliberately connects two input listeners to one processor node.
 The DYA build also checks that the subsystem and representative setting keys

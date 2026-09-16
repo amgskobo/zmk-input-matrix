@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 amgskobo
+ * Copyright (c) 2026 The ZMK Input Matrix Contributors
  * SPDX-License-Identifier: MIT
  */
 
@@ -9,7 +9,7 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>
 
-#define ZMK_INPUT_MATRIX_SUBSYSTEM_TOKEN amgskobo__matrix
+#define ZMK_INPUT_MATRIX_SUBSYSTEM_TOKEN zip__matrix
 #define ZMK_INPUT_MATRIX_SUBSYSTEM STRINGIFY(ZMK_INPUT_MATRIX_SUBSYSTEM_TOKEN)
 
 #define ZMK_INPUT_MATRIX_SETTING_KEY(n, field) DT_NODE_FULL_NAME(DT_DRV_INST(n)) "." field

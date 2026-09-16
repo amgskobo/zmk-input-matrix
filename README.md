@@ -8,7 +8,7 @@ A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a con
 ## Compatibility
 
 The module is continuously compile-tested against both upstream ZMK `main`
-and Cormoran's `main+dya`. Core gesture processing works on either tree. The
+and the DYA fork's `main+dya`. Core gesture processing works on either tree. The
 runtime-settings UI is optional and is enabled only on a tree that provides
 `zmk-feature-custom-settings`, such as `main+dya`.
 
@@ -32,7 +32,7 @@ matrix processor nodes.
 ## Runtime settings
 
 With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, DYA Studio exposes each
-instance under `amgskobo__matrix`. The editable values are `enabled`,
+instance under `zip__matrix`. The editable values are `enabled`,
 `flick_threshold`, `long_press_ms`, `suppress_abs`, `suppress_btn_touch`, and
 `suppress_key`. The registry owns persistence. A settings update invalidates
 every listener stream; a reported hold is released, pending work is cancelled,
@@ -54,11 +54,11 @@ Add this module to your project's `config/west.yml` file.
 ```yaml
 manifest:
   remotes:
-    - name: amgskobo
+    - name: module-source
       url-base: https://github.com/amgskobo
   projects:
     - name: zmk-input-matrix
-      remote: amgskobo
+      remote: module-source
       revision: main
 ```
 
@@ -67,11 +67,11 @@ manifest and enable the integration in the central-side configuration:
 
 ```yaml
   remotes:
-    - name: cormoran
+    - name: dya-source
       url-base: https://github.com/cormoran
   projects:
     - name: zmk-feature-custom-settings
-      remote: cormoran
+      remote: dya-source
       revision: main
 ```
 

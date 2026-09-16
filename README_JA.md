@@ -7,7 +7,7 @@
 
 ## 互換性
 
-upstream ZMK の `main` と Cormoran の `main+dya` の両方で継続的に
+upstream ZMK の `main` と DYA fork の `main+dya` の両方で継続的に
 コンパイルテストします。gesture処理本体はどちらでも使用できます。ランタイム設定UIは
 任意機能であり、`main+dya` など `zmk-feature-custom-settings` を提供する構成でのみ
 有効にします。
@@ -31,7 +31,7 @@ matrix processor node を複製する必要もありません。
 ## ランタイム設定
 
 `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y` を有効にすると、DYA Studio の
-`amgskobo__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
+`zip__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
 `flick_threshold`、`long_press_ms`、`suppress_abs`、`suppress_btn_touch`、
 `suppress_key` です。永続化は custom-settings registry だけが担当します。
 設定更新時は全 listener stream を無効化し、報告済み hold を解放、保留中の work を
@@ -52,11 +52,11 @@ ZMK の設定ファイル `config/west.yml` に本プロジェクトを追加し
 ```yaml
 manifest:
   remotes:
-    - name: amgskobo
+    - name: module-source
       url-base: https://github.com/amgskobo
   projects:
     - name: zmk-input-matrix
-      remote: amgskobo
+      remote: module-source
       revision: main
 ```
 
@@ -65,11 +65,11 @@ DYAのランタイム設定を使用する場合は、manifestへ
 
 ```yaml
   remotes:
-    - name: cormoran
+    - name: dya-source
       url-base: https://github.com/cormoran
   projects:
     - name: zmk-feature-custom-settings
-      remote: cormoran
+      remote: dya-source
       revision: main
 ```
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 amgskobo
+ * Copyright (c) 2025 The ZMK Input Matrix Contributors
  *
  * SPDX-License-Identifier: MIT
  */
