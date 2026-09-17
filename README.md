@@ -242,7 +242,7 @@ See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-l
 | `kscan` | phandle | Required | The `zmk,kscan-input-matrix` proxy that receives the gesture events |
 | `long-press-ms` | int | 200 | Tap hold time (ms), 0 to disable |
 | `suppress-abs` | bool | false | Consume all `INPUT_EV_ABS` events, not only X/Y |
-| `suppress-btn-touch` | bool | false | Consume only `INPUT_BTN_TOUCH` |
+| `suppress-btn-touch` | bool | true in the supplied `zip_matrix` node | Consume only `INPUT_BTN_TOUCH`. Add the property to custom nodes to enable it; an omitted Devicetree boolean is false. |
 | `suppress-key` | bool | false | Consume all `INPUT_EV_KEY` events, including touchpad button gestures |
 | `diamond-tap` | bool | false | Report taps only, split into D-pad-style diamond zones on a 1x4 grid |
 
