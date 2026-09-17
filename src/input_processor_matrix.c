@@ -409,8 +409,6 @@ stream_for_event(struct zip_matrix_data *data, const struct zmk_input_processor_
     }
 
     if (state->input_device_index >= ZIP_MATRIX_STREAM_COUNT) {
-        LOG_ERR("Input device index %u exceeds the %u allocated matrix streams",
-                state->input_device_index, ZIP_MATRIX_STREAM_COUNT);
         return NULL;
     }
 

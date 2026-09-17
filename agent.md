@@ -109,7 +109,8 @@ other's gesture, hold timer, or suppression record. Do not move stream fields
 back into node-wide data and do not create one node per pad as a workaround.
 
 The stream array is sized from enabled input-listener instances. An invalid
-runtime index is logged and passed through; it must never alias stream zero.
+runtime index is passed through without logging in the event hot path; it must
+never alias stream zero.
 
 ## Event contract
 

@@ -13,11 +13,13 @@
 #include <errno.h>
 #include <zephyr/drivers/kscan.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/spinlock.h>
 #include <kscan_input_matrix.h>
 
 LOG_MODULE_REGISTER(kscan_matrix, CONFIG_ZMK_LOG_LEVEL);
 
 struct kscan_matrix_data {
+    struct k_spinlock lock;
     kscan_callback_t callback;
     bool enabled;
 };
@@ -36,6 +38,7 @@ struct kscan_matrix_config {
 void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row, uint32_t column, bool pressed) {
     struct kscan_matrix_data *data;
     const struct kscan_matrix_config *cfg;
+    kscan_callback_t callback;
 
     if (!device_is_ready(dev)) {
         return;
@@ -44,19 +47,19 @@ void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row, uint3
     data = dev->data;
     cfg = dev->config;
 
-    if (!data->enabled) {
-        return;
-    }
-
     if (row >= cfg->rows || column >= cfg->columns) {
         LOG_WRN("Ignoring out-of-range KSCAN event: row %u/%u, column %u/%u", row, cfg->rows,
                 column, cfg->columns);
         return;
     }
 
-    if (data->callback) {
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    callback = data->enabled ? data->callback : NULL;
+    k_spin_unlock(&data->lock, key);
+
+    if (callback) {
         LOG_DBG("Reporting KSCAN event: Row %u, Column %u, Pressed %d", row, column, pressed);
-        data->callback(dev, row, column, pressed);
+        callback(dev, row, column, pressed);
     }
 }
 
@@ -68,7 +71,9 @@ static int kscan_matrix_configure(const struct device *dev, kscan_callback_t cal
         return -EINVAL;
     }
 
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->callback = callback;
+    k_spin_unlock(&data->lock, key);
     LOG_INF("KSCAN callback registered for %s", dev->name);
     return 0;
 }
@@ -76,7 +81,9 @@ static int kscan_matrix_configure(const struct device *dev, kscan_callback_t cal
 static int kscan_matrix_enable_callback(const struct device *dev) {
     struct kscan_matrix_data *data = dev->data;
 
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->enabled = true;
+    k_spin_unlock(&data->lock, key);
     LOG_DBG("KSCAN matrix %s enabled", dev->name);
     return 0;
 }
@@ -84,7 +91,9 @@ static int kscan_matrix_enable_callback(const struct device *dev) {
 static int kscan_matrix_disable_callback(const struct device *dev) {
     struct kscan_matrix_data *data = dev->data;
 
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->enabled = false;
+    k_spin_unlock(&data->lock, key);
     LOG_DBG("KSCAN matrix %s disabled", dev->name);
     return 0;
 }
