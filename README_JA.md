@@ -26,7 +26,13 @@ upstream ZMK の `main` と DYA fork の `main+dya` の両方で継続的に
 KSCAN device は node に属しますが、接触座標、flick 判定、hold work、contact
 generation、抑制済みボタン記録は `input_device_index` ごとに独立します。そのため、
 local と split 経由の pad が進行中の gesture 状態を上書きすることはなく、左右専用の
-matrix processor node を複製する必要もありません。
+matrix processor node を複製する必要もありません。不正な listener index は変換せず
+通過し、stream 0 へ alias しません。
+
+遅延 long-press handler が行うのは、上限のあるメモリ内状態更新と KSCAN report だけです。
+sleep、動的確保、settings 走査、flash 書き込みは行いません。hold press の報告とその状態更新の
+間へ touch release が割り込まないことを保証するため、Zephyr の協調 system work queue を
+意図的に使用します。
 
 ## ランタイム設定
 

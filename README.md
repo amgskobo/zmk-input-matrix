@@ -27,7 +27,13 @@ and the output KSCAN device belong to the node, while contact coordinates,
 flick detection, hold work, contact generations, and suppressed-button records
 belong to `input_device_index`. Local and split-proxied pads therefore cannot
 overwrite each other's in-progress gesture state and do not need duplicate
-matrix processor nodes.
+matrix processor nodes. An invalid listener index is passed through and never
+aliases stream zero.
+
+The delayed long-press handler performs only bounded in-memory state changes
+and KSCAN reporting: it does not sleep, allocate, scan settings, or write
+flash. It intentionally remains on Zephyr's cooperative system work queue so
+a touch release cannot interleave between its paired hold press bookkeeping.
 
 ## Runtime settings
 

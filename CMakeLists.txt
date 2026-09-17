@@ -1,4 +1,4 @@
-# Copyright (c) 2025 The ZMK Contributors
+# Copyright (c) 2025-2026 amgskobo
 # SPDX-License-Identifier: MIT
 
 if(CONFIG_ZMK_INPUT_PROCESSOR_MATRIX OR CONFIG_ZMK_KSCAN_INPUT_MATRIX)
