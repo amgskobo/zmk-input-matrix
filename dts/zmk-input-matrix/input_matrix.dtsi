@@ -28,6 +28,7 @@
         y = <1024>;
         flick-threshold = <50>;
         long-press-ms = <200>;
+        suppress-btn-touch;
         kscan = <&kscan_gesture>;
     };
 };
