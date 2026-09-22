@@ -3,6 +3,8 @@
 [![Test](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[日本語](README_JA.md)
+
 A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a configurable gesture grid with long-press support. Gestures are reported as standard KSCAN matrix events for full ZMK Studio compatibility.
 
 ## Compatibility
@@ -281,6 +283,21 @@ Points on a diagonal boundary prefer the vertical axis, so the exact center maps
 ```
 
 `flick-threshold` is still required by the binding but has no effect on a diamond instance.
+
+## Tests
+
+```sh
+bash ./tests/run-integration-docker.sh upstream
+bash ./tests/run-integration-docker.sh dya
+```
+
+Each variant builds a firmware fixture in which two input listeners share one
+matrix node, and checks that the processor and the virtual KSCAN proxy are
+enabled. `upstream` builds against ZMK `main` and confirms that the custom
+settings stay off; `dya` builds against the DYA ZMK fork with custom settings on
+and confirms that the `amgskobo__matrix` subsystem and representative setting
+keys are linked into the firmware. GitHub Actions runs both on every pull
+request and on pushes to `main`.
 
 ## License
 

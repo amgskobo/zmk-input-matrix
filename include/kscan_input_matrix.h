@@ -19,5 +19,8 @@
  * @param row KSCAN row index: (gesture * rows) + grid_row.
  * @param column KSCAN column index: grid_column (preserves physical grid layout).
  * @param pressed True if the key is pressed, false if released.
+ *
+ * Does nothing when dev is not a ready zmk,kscan-input-matrix device, or when
+ * the cell is outside its rows and columns.
  */
 void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row, uint32_t column, bool pressed);

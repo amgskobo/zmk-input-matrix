@@ -29,6 +29,8 @@ struct kscan_matrix_config {
     uint32_t columns;
 };
 
+static bool kscan_matrix_device_valid(const struct device *dev);
+
 /**
  * @brief Public API to report gesture events to the matrix.
  * @param row Matrix row (includes gesture offset).
@@ -40,7 +42,7 @@ void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row, uint3
     const struct kscan_matrix_config *cfg;
     kscan_callback_t callback;
 
-    if (!device_is_ready(dev)) {
+    if (!kscan_matrix_device_valid(dev) || !device_is_ready(dev)) {
         return;
     }
 
@@ -134,3 +136,20 @@ static const struct kscan_driver_api kscan_matrix_api = {
                           &kscan_matrix_api);
 
 DT_INST_FOREACH_STATUS_OKAY(KSCAN_MATRIX_INIT)
+
+#define KSCAN_MATRIX_DEVICE_REF(n) DEVICE_DT_INST_GET(n),
+
+/* The report path reads dev->data as this driver's data, so it accepts only
+ * the devices this driver defined. */
+static const struct device *const kscan_matrix_devices[] = {
+    DT_INST_FOREACH_STATUS_OKAY(KSCAN_MATRIX_DEVICE_REF)};
+
+static bool kscan_matrix_device_valid(const struct device *dev) {
+    for (size_t i = 0U; i < ARRAY_SIZE(kscan_matrix_devices); i++) {
+        if (kscan_matrix_devices[i] == dev) {
+            return true;
+        }
+    }
+
+    return false;
+}

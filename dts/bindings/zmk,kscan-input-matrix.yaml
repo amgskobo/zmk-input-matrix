@@ -1,3 +1,6 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
 description: |
   ZMK KSCAN Input Matrix (Gesture Matrix Buffer)
 

@@ -3,6 +3,8 @@
 [![Test](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-matrix/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[English](README.md)
+
 トラックパッドの絶対座標（X/Y）を、設定可能なジェスチャグリッドに変換する ZMK 入力プロセッサです。長押しに対応し、ジェスチャは標準的な KSCAN マトリクスイベントとして報告されるため、ZMK Studio と完全に互換性があります。
 
 ## 互換性
@@ -126,6 +128,16 @@ devicetreeの固定設定だけで使用する場合、このオプションは�
     input-processors = <&zip_matrix>;
 };
 ```
+
+#### マトリクスの対応
+
+| 行の範囲 | ジェスチャ |
+|:---------:|:-------:|
+| 0 - 2 | Tap |
+| 3 - 5 | Up |
+| 6 - 8 | Down |
+| 9 - 11 | Left |
+| 12 - 14 | Right |
 
 #### ジェスチャ仕様
 
@@ -269,6 +281,19 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 ```
 
 `flick-threshold` はバインディング上は必須ですが、ダイヤモンドのインスタンスでは効果がありません。
+
+## テスト
+
+```sh
+bash ./tests/run-integration-docker.sh upstream
+bash ./tests/run-integration-docker.sh dya
+```
+
+各variantで、2つのinput listenerが1つのmatrix nodeを共有するファームウェアfixtureをビルドし、
+processorと仮想KSCANプロキシが有効になっていることを確認します。`upstream` はZMK `main` で
+ビルドしてcustom settingsが無効のままであることを、`dya` はcustom settingsを有効にしたDYA ZMK
+forkでビルドして `amgskobo__matrix` subsystemと代表的な設定キーがファームウェアにリンクされて
+いることを確認します。GitHub Actions は pull request ごとと `main` への push で両方を実行します。
 
 ## ライセンス
 

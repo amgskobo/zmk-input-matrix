@@ -170,7 +170,8 @@ static bool zip_matrix_may_suppress_key(struct zip_matrix_stream *stream,
     k_spin_unlock(&stream->lock, key);
 
     if (!event->value && !was_suppressed) {
-        LOG_WRN("Passing BTN_%d release: its press was not suppressed here",
+        /* A route change between the press and its release, which is routine. */
+        LOG_DBG("Passing BTN_%d release: its press was not suppressed here",
                 event->code - INPUT_BTN_0);
         return false;
     }
