@@ -32,8 +32,12 @@ with tempfile.TemporaryDirectory(prefix="matrix-geometry-") as folder:
         ("optimized", ["-O2"]),
         ("sanitized", ["-O1", "-g", "-fno-omit-frame-pointer",
                        "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]),
+        ("coverage", ["-O0", "--coverage"]),
     ):
         binary = pathlib.Path(folder) / variant
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                         *flags, str(unit), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
+    subprocess.run(["gcov", "-b", "-c", "-o", str(pathlib.Path(folder) / "coverage-test.gcno"),
+                    str(unit)],
+                   cwd=folder, check=True)

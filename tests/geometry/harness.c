@@ -58,6 +58,28 @@ int main(void) {
     calculate_kscan_coordinates(&grid, 0U, 256U, GESTURE_TAP, &row, &column);
     assert(row == 0U && column == 3U);
     assert(get_gesture_type(&grid, 100, 0) == GESTURE_TAP);
+
+    /* Exercise every coordinate of small rectangular and diamond panels. */
+    for (uint16_t width = 1U; width <= 12U; width++) {
+        for (uint16_t height = 1U; height <= 12U; height++) {
+            grid.x = width;
+            grid.y = height;
+            for (uint16_t y = 0U; y <= height; y++) {
+                for (uint16_t x = 0U; x <= width; x++) {
+                    grid.diamond_tap = false;
+                    grid.rows = 3U;
+                    grid.columns = 3U;
+                    calculate_kscan_coordinates(&grid, x, y, GESTURE_TAP, &row, &column);
+                    assert(row < 3U && column < 3U);
+                    grid.diamond_tap = true;
+                    grid.rows = 1U;
+                    grid.columns = 4U;
+                    calculate_kscan_coordinates(&grid, x, y, GESTURE_TAP, &row, &column);
+                    assert(row == 0U && column < 4U);
+                }
+            }
+        }
+    }
     puts("matrix geometry: PASS");
     return 0;
 }
