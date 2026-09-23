@@ -287,9 +287,14 @@ Points on a diagonal boundary prefer the vertical axis, so the exact center maps
 ## Tests
 
 ```sh
+python3 tests/geometry/run.py
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
+
+The geometry test compiles the driver's coordinate and gesture functions
+directly, in optimized and ASan/UBSan builds. It checks grid edges, diamond
+zones, diagonal flick thresholds and wide squared travel.
 
 Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are

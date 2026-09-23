@@ -285,9 +285,13 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 ## テスト
 
 ```sh
+python3 tests/geometry/run.py
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
+
+geometry テストは driver の座標・gesture 関数そのものを最適化版と ASan/UBSan 版で
+実行し、grid の端、diamond の領域、斜め flick の閾値、大きな移動距離を確認します。
 
 各variantで、2つのinput listenerが1つのmatrix nodeを共有するファームウェアfixtureをビルドし、
 processorと仮想KSCANプロキシが有効になっていることを確認します。`upstream` はZMK `main` で

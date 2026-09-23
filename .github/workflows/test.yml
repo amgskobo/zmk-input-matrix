@@ -21,6 +21,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Exercise driver coordinate and gesture functions
+        run: python3 tests/geometry/run.py
+
   firmware:
     runs-on: ubuntu-latest
     timeout-minutes: 45
