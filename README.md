@@ -295,7 +295,7 @@ Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are
 enabled. `upstream` builds against ZMK `main` and confirms that the custom
 settings stay off; `dya` builds against the DYA ZMK fork with custom settings on
-and confirms that the `amgskobo__matrix` subsystem and representative setting
+and confirms that the `amgskobo__matrix` subsystem and every setting
 keys are linked into the firmware. GitHub Actions runs both on every pull
 request and on pushes to `main`.
 

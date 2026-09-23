@@ -292,8 +292,8 @@ bash ./tests/run-integration-docker.sh dya
 各variantで、2つのinput listenerが1つのmatrix nodeを共有するファームウェアfixtureをビルドし、
 processorと仮想KSCANプロキシが有効になっていることを確認します。`upstream` はZMK `main` で
 ビルドしてcustom settingsが無効のままであることを、`dya` はcustom settingsを有効にしたDYA ZMK
-forkでビルドして `amgskobo__matrix` subsystemと代表的な設定キーがファームウェアにリンクされて
-いることを確認します。GitHub Actions は pull request ごとと `main` への push で両方を実行します。
+forkでビルドして `amgskobo__matrix` subsystemと全設定キーがファームウェアにリンクされて
+いることを確認します。GitHub Actions は pull request、`main` への push、週次実行で両方を確認します。
 
 ## ライセンス
 

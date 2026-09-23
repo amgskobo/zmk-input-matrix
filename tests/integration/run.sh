@@ -53,8 +53,12 @@ else
         "$work_dir/build/zephyr/.config"
     strings "$work_dir/build/zephyr/zmk.elf" >"$work_dir/build/zephyr/strings.txt"
     grep -Fxq amgskobo__matrix "$work_dir/build/zephyr/strings.txt"
-    grep -Fxq matrix.suppress_btn_touch "$work_dir/build/zephyr/strings.txt"
-    grep -Fxq matrix.flick_threshold "$work_dir/build/zephyr/strings.txt"
+    for key in enabled flick_threshold long_press_ms suppress_abs suppress_btn_touch suppress_key; do
+        grep -Fxq "matrix.$key" "$work_dir/build/zephyr/strings.txt" || {
+            echo "missing Studio setting: matrix.$key" >&2
+            exit 1
+        }
+    done
 fi
 
 echo "$variant ZMK firmware fixture: PASS"
