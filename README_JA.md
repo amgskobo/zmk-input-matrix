@@ -228,7 +228,7 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 };
 ```
 
-詳しくは [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) を参照してください。
+詳しくは [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) を参照してください。
 
 ## 設定リファレンス
 

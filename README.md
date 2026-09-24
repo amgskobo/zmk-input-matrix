@@ -230,7 +230,7 @@ Or use the [ZMK Physical Layout Converter](https://zmk-physical-layout-converter
 };
 ```
 
-See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) documentation for details.
+See the [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) documentation for details.
 
 ## Configuration Reference
 
