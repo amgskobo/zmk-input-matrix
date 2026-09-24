@@ -295,8 +295,10 @@ bash ./tests/run-integration-docker.sh dya
 The geometry test compiles the driver's coordinate and gesture functions
 directly, in optimized and ASan/UBSan builds. It checks grid edges, diamond
 zones, diagonal flick thresholds and wide squared travel, then exhausts every
-coordinate of small rectangular and diamond panels. A separate gcov run reports
-line and branch coverage of this extracted geometry test, not the entire driver.
+coordinate of small rectangular and diamond panels. A separate gcov run
+attributes the extracted functions to their original driver source and requires
+100% line and branch coverage of those seven geometry/gesture functions. It
+does not measure the entire driver.
 
 Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are

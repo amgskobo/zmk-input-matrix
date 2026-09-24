@@ -80,6 +80,25 @@ int main(void) {
             }
         }
     }
+
+    grid.x = 1024U;
+    grid.y = 512U;
+    grid.diamond_tap = true;
+    grid.rows = 2U;
+    grid.columns = 4U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row < 2U && column < 4U);
+    grid.rows = 1U;
+    grid.columns = 3U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column < 3U);
+    grid.columns = 1U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 0U);
+    grid.diamond_tap = false;
+    assert(travel_squared(-30, -40) == 2500ULL);
+    assert(get_gesture_type(&grid, -30, -40) == GESTURE_UP);
+    assert(get_gesture_type(&grid, -50, 0) == GESTURE_LEFT);
     puts("matrix geometry: PASS");
     return 0;
 }
