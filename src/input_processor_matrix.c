@@ -375,7 +375,7 @@ static void hold_work_handler(struct k_work *work)
         if (same_hold) {
             stream->hold_reported = true;
             release_after_press =
-                stream->hold_release_pending || !stream->is_btn_touch || !same_contact;
+                !same_contact || stream->hold_release_pending || !stream->is_btn_touch;
         }
 
         if (same_hold && release_after_press) {
@@ -383,15 +383,18 @@ static void hold_work_handler(struct k_work *work)
             stream->hold_reported = false;
             stream->hold_release_pending = false;
             if (same_contact) {
+                /*
+                 * Still the contact that was held, so it has ended: a release
+                 * is pending only once the touch is off, and a new touch would
+                 * have changed the contact. Forget where it was.
+                 */
                 stream->start_x = COORD_UNINITIALIZED;
                 stream->start_y = COORD_UNINITIALIZED;
+                stream->current_x = COORD_UNINITIALIZED;
+                stream->current_y = COORD_UNINITIALIZED;
                 stream->flick_latched = false;
                 stream->flick_gesture = GESTURE_TAP;
                 stream->flick_max_travel = 0U;
-                if (!stream->is_btn_touch) {
-                    stream->current_x = COORD_UNINITIALIZED;
-                    stream->current_y = COORD_UNINITIALIZED;
-                }
             }
         }
         k_spin_unlock(&stream->lock, k2);

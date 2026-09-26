@@ -135,10 +135,10 @@ static int matrix_check_unique_keys(void)
             continue;
         }
         ZMK_CUSTOM_SETTING_FOREACH(other) {
-            if (other == setting) {
-                break;
-            }
-            if (strcmp(other->custom_subsystem_id, ZMK_INPUT_MATRIX_SUBSYSTEM) == 0 &&
+            /* Report a pair once, from the second of the two: both point into
+             * the one linker section, so their order is their address. */
+            if (other < setting &&
+                strcmp(other->custom_subsystem_id, ZMK_INPUT_MATRIX_SUBSYSTEM) == 0 &&
                 strcmp(other->key, setting->key) == 0) {
                 LOG_ERR("Duplicate matrix setting key: %s", setting->key);
             }
