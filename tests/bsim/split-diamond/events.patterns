@@ -1,0 +1,3 @@
+s/^d_00: @[0-9:.]{15}  \[([0-9:.,]+)\] <[a-z]+> zmk: on_keymap_binding_(pressed|released): (position [0-9]+).*/[\1] \2 \3/p
+s/^d_00: @[0-9:.]{15}  \[([0-9:.,]+)\] <[a-z]+> zmk: [a-z_]+: (layer_changed: .*)/[\1] \2/p
+s/^d_02: @[0-9:.]{15}  +([0-9a-f]{2}( +[0-9a-f]{2})+).*/host report \1/p

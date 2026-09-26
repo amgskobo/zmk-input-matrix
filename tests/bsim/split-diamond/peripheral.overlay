@@ -1,0 +1,50 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * The peripheral's pad, scripted as (delay-ms type code value sync);
+ * nrf52_bsim.keymap has the timeline. The diamond runs on the central.
+ */
+
+#include "shared.dtsi"
+
+/ {
+    chosen {
+        zmk,kscan = &kscan;
+    };
+
+    pad: pad {
+        compatible = "zmk,test-input-script";
+        events = <
+            /* 4.0 s: a tap at the top. */
+            TOUCH(4000, 512, 100) POS(10, 515, 102) LIFT(10)
+            /* 4.5 s: a tap at the right. */
+            TOUCH(480, 950, 500) POS(10, 948, 503) LIFT(10)
+            /* 5.0 s to 5.4 s: a long press at the bottom. */
+            TOUCH(480, 512, 950) POS(50, 513, 950) POS(50, 514, 951) POS(50, 513, 952)
+            POS(50, 512, 951) POS(50, 513, 950) POS(50, 514, 950) POS(50, 513, 951) LIFT(50)
+            /* 6.0 s to 6.5 s: a long press at the left. */
+            TOUCH(600, 80, 512) POS(50, 81, 512) POS(50, 82, 513) POS(50, 81, 514) POS(50, 80, 513)
+            POS(50, 81, 512) POS(50, 82, 512) POS(50, 81, 513) POS(50, 80, 512) POS(50, 81, 512)
+            LIFT(50)
+            /* 7.0 s: a tap at the top again: the diamond still works. */
+            TOUCH(500, 512, 100) POS(10, 515, 102) LIFT(10)
+        >;
+    };
+};
+
+&split_input {
+    device = <&pad>;
+};
+
+&kscan_gesture {
+    status = "disabled";
+};
+
+&zip_matrix {
+    status = "disabled";
+};
+
+&composite {
+    status = "disabled";
+};

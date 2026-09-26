@@ -1,0 +1,12 @@
+[00:00:00.435,333] split_central_connected
+[00:00:01.274,749] split_central_connected
+[00:00:06.209,777] pressed position 10
+host report 00 00 51 00 00 00 00 00
+[00:00:09.091,217] split_central_disconnected
+[00:00:09.091,217] released position 10
+host report 00 00 00 00 00 00 00 00
+[00:00:10.236,907] split_central_connected
+[00:00:13.028,472] pressed position 8
+[00:00:13.028,472] released position 8
+host report 00 00 52 00 00 00 00 00
+host report 00 00 00 00 00 00 00 00

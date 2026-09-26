@@ -1,0 +1,58 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * What both halves share: the peripheral's pad reaches the central through a
+ * ZMK input split, where a 1x4 tap diamond turns its contacts into key
+ * presses on a gesture kscan.
+ */
+
+#include <zmk-input-matrix/input_matrix.dtsi>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+#define TOUCH(delay, x, y)                                                                         \
+    delay INPUT_EV_KEY INPUT_BTN_TOUCH 1 0 0 INPUT_EV_ABS INPUT_ABS_X (x) 0 0 INPUT_EV_ABS         \
+        INPUT_ABS_Y (y) 1
+#define POS(delay, x, y) delay INPUT_EV_ABS INPUT_ABS_X (x) 0 0 INPUT_EV_ABS INPUT_ABS_Y (y) 1
+#define LIFT(delay) delay INPUT_EV_KEY INPUT_BTN_TOUCH 0 1
+
+&kscan_gesture {
+    rows = <1>;
+    columns = <4>;
+};
+
+&zip_matrix {
+    rows = <1>;
+    columns = <4>;
+    x = <1024>;
+    y = <1024>;
+    long-press-ms = <200>;
+    diamond-tap;
+    suppress-abs;
+    suppress-key;
+};
+
+/ {
+    splits {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        split_input: split_input@0 {
+            compatible = "zmk,input-split";
+            reg = <0>;
+        };
+    };
+
+    split_listener: split_listener {
+        compatible = "zmk,input-listener";
+        status = "disabled";
+        device = <&split_input>;
+        input-processors = <&zip_matrix>;
+
+        /* The same chain on layer 1: only the layer changes, not the route. */
+        layer_one {
+            layers = <1>;
+            input-processors = <&zip_matrix>;
+        };
+    };
+};

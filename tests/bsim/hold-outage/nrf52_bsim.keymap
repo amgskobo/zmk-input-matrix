@@ -1,0 +1,68 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * A pad on the peripheral holds a 1x4 tap diamond key on the central across
+ * the split link, and the link goes down under it.
+ *
+ * 6.0 s   A long press at the bottom: DOWN goes down at 6.2 s. From 6.3 s to
+ *         9.5 s wideband noise drowns the radio and the split link times
+ *         out; the central releases the contact on the pad's behalf, and DOWN
+ *         must come up then rather than stay down on the host.
+ * 13.0 s  A tap at the top: UP.
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/kscan_mock.h>
+
+#include "shared.dtsi"
+
+&kscan {
+    /delete-property/ exit-after;
+    events = <>;
+};
+
+&split_listener {
+    status = "okay";
+};
+
+/ {
+    chosen {
+        zmk,kscan = &composite;
+    };
+
+    /* The mock's 2x2 on row 0 and 1, the diamond's four cells on row 2. */
+    composite: composite {
+        compatible = "zmk,kscan-composite";
+        rows = <3>;
+        columns = <4>;
+
+        mock {
+            kscan = <&kscan>;
+        };
+
+        gesture {
+            kscan = <&kscan_gesture>;
+            row-offset = <2>;
+        };
+    };
+
+    keymap {
+        compatible = "zmk,keymap";
+
+        default_layer {
+            bindings = <
+            &mo 1  &kp B     &none    &none
+            &kp C  &kp D     &none    &none
+            &kp UP &kp RIGHT &kp DOWN &kp LEFT>;
+        };
+
+        layer_one {
+            bindings = <
+            &trans &trans &trans &trans
+            &trans &trans &trans &trans
+            &trans &trans &trans &trans>;
+        };
+    };
+};
