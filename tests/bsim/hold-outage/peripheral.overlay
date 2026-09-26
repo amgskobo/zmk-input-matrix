@@ -1,0 +1,72 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * The peripheral's pad, scripted as (delay-ms type code value sync);
+ * nrf52_bsim.keymap has the timeline. It reports every 50 ms while touched.
+ * The diamond runs on the central.
+ */
+
+#include "shared.dtsi"
+
+/ {
+    chosen {
+        zmk,kscan = &kscan;
+    };
+
+    pad: pad {
+        compatible = "zmk,test-input-script";
+        events = <
+            /* 6.0 s to 12.0 s: a long press at the bottom, through the outage. */
+            TOUCH(6000, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) POS(50, 512, 951) POS(50, 512, 950) POS(50, 512, 951)
+            POS(50, 512, 950) LIFT(20)
+            /* 13.0 s: a tap at the top: the diamond still works. */
+            TOUCH(980, 512, 100) POS(10, 515, 102) LIFT(10)
+        >;
+    };
+};
+
+&split_input {
+    device = <&pad>;
+};
+
+&kscan_gesture {
+    status = "disabled";
+};
+
+&zip_matrix {
+    status = "disabled";
+};
+
+&composite {
+    status = "disabled";
+};

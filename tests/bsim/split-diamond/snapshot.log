@@ -1,0 +1,24 @@
+[00:00:03.152,679] released position 5
+host report 00 00 00 00 00 00 00 00
+[00:00:04.027,770] pressed position 8
+[00:00:04.027,770] released position 8
+host report 00 00 52 00 00 00 00 00
+host report 00 00 00 00 00 00 00 00
+[00:00:04.522,766] pressed position 9
+[00:00:04.522,766] released position 9
+host report 00 00 4f 00 00 00 00 00
+host report 00 00 00 00 00 00 00 00
+[00:00:05.203,735] pressed position 10
+host report 00 00 51 00 00 00 00 00
+[00:00:05.407,775] released position 10
+host report 00 00 00 00 00 00 00 00
+[00:00:06.208,740] pressed position 11
+host report 00 00 50 00 00 00 00 00
+[00:00:06.302,734] layer_changed: layer 1 state 1 locked 0
+[00:00:06.302,734] released position 11
+host report 00 00 00 00 00 00 00 00
+[00:00:06.602,783] layer_changed: layer 1 state 0 locked 0
+[00:00:07.027,770] pressed position 8
+[00:00:07.027,770] released position 8
+host report 00 00 52 00 00 00 00 00
+host report 00 00 00 00 00 00 00 00

@@ -228,7 +228,7 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 };
 ```
 
-詳しくは [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) を参照してください。
+詳しくは [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) を参照してください。
 
 ## 設定リファレンス
 
@@ -285,15 +285,21 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 ## テスト
 
 ```sh
-python3 tests/geometry/run.py
+python3 tests/runtime/run.py        # または: bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
-geometry テストは driver の座標・gesture 関数そのものを最適化版と ASan/UBSan 版で
-実行し、grid の端、diamond の領域、斜め flick の閾値、大きな移動距離と小さな
-パネルの全座標を確認します。gcov が出す行・分岐カバレッジは抽出した geometry
-テストの値であり、driver 全体の値ではありません。
+runtime テストは driver の関数そのものを `tests/runtime/` のスタブ付きハーネスに取り出し、
+最適化版・ASan/UBSan 版・gcov 版で実行します。geometry ハーネスは grid の端、diamond の領域、
+斜め flick の閾値、大きな移動距離と小さなパネルの全座標を確認します。driver ハーネスは
+event handler に接触を流し、tap、最遠点を追う flick、長押し、hold を押している間に届く
+接触や設定変更、対になるキー抑制、listener ごとの stream、レイヤ変更での解放を再現します。
+さらに仮想KSCANプロキシと設定ヘルパーのハーネスがあります。CIは取り出した各関数
+(座標、driver と layer listener、プロキシ、設定ブリッジ)の行・分岐100%を要求します。
+保存された設定をドライバ呼び出しに変える適用処理もマクロごと取り出し、ソースに
+ゲートのない関数が1つでもあれば runner が失敗します。devicetree からの
+インスタンス生成そのものは下記のファームウェアfixtureで確認します。
 
 各variantで、2つのinput listenerが1つのmatrix nodeを共有するファームウェアfixtureをビルドし、
 processorと仮想KSCANプロキシが有効になっていることを確認します。`upstream` はZMK `main` で

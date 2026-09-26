@@ -21,13 +21,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  geometry:
+  runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - name: Exercise driver coordinate and gesture functions
-        run: python3 tests/geometry/run.py
+      - name: Exercise the driver, kscan proxy and settings helpers with full coverage
+        run: python3 tests/runtime/run.py
 
   firmware:
     runs-on: ubuntu-latest

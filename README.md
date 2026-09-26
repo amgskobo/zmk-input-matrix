@@ -230,7 +230,7 @@ Or use the [ZMK Physical Layout Converter](https://zmk-physical-layout-converter
 };
 ```
 
-See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) documentation for details.
+See the [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) documentation for details.
 
 ## Configuration Reference
 
@@ -287,16 +287,25 @@ Points on a diagonal boundary prefer the vertical axis, so the exact center maps
 ## Tests
 
 ```sh
-python3 tests/geometry/run.py
+python3 tests/runtime/run.py        # or: bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
-The geometry test compiles the driver's coordinate and gesture functions
-directly, in optimized and ASan/UBSan builds. It checks grid edges, diamond
-zones, diagonal flick thresholds and wide squared travel, then exhausts every
-coordinate of small rectangular and diamond panels. A separate gcov run reports
-line and branch coverage of this extracted geometry test, not the entire driver.
+The runtime test lifts the driver's own functions into the stubbed harnesses in
+`tests/runtime/` and runs them optimized, under ASan/UBSan, and with gcov. The
+geometry harness checks grid edges, diamond zones, diagonal flick thresholds and
+wide squared travel, then exhausts every coordinate of small rectangular and
+diamond panels. The driver harness plays contacts through the event handler:
+taps, flicks that follow the farthest point, long-press holds, touches and
+settings writes landing while a hold is being pressed, paired key suppression,
+per-listener streams and layer-change releases. Two more cover the virtual KSCAN
+proxy and the settings helpers. CI requires 100% line and branch coverage of
+each lifted function: seven geometry functions, twelve driver functions and the
+layer listener, six proxy functions and the settings bridge. The apply step that
+turns stored settings into driver calls is lifted with its macro too, and the
+runner fails if any function in the sources has no gate. Devicetree
+instantiation itself is left to the firmware fixtures below.
 
 Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are
@@ -304,7 +313,7 @@ enabled. `upstream` builds against ZMK `main` and confirms that the custom
 settings stay off; `dya` builds against the DYA ZMK fork with custom settings on
 and confirms that the `amgskobo__matrix` subsystem and every setting
 keys are linked into the firmware. GitHub Actions runs both on every pull
-request and on pushes to `main`.
+request, on pushes to `main`, and weekly.
 
 ## License
 

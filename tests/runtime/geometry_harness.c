@@ -45,6 +45,9 @@ int main(void) {
     assert(get_gesture_type(&grid, 29, 40) == GESTURE_TAP);
     assert(get_gesture_type(&grid, 50, 0) == GESTURE_RIGHT);
     assert(get_gesture_type(&grid, 49, 0) == GESTURE_TAP);
+    /* A normalised tie between the axes falls to the vertical. */
+    assert(get_gesture_type(&grid, 60, 30) == GESTURE_DOWN);
+    assert(get_gesture_type(&grid, 60, -30) == GESTURE_UP);
 
     grid.rows = 1U;
     grid.columns = 4U;
@@ -53,10 +56,21 @@ int main(void) {
     assert(row == 0U && column == 0U);
     calculate_kscan_coordinates(&grid, 1024U, 256U, GESTURE_TAP, &row, &column);
     assert(row == 0U && column == 1U);
+    /* Mostly right, a little down: each axis normalised by the other's size. */
+    calculate_kscan_coordinates(&grid, 1024U, 300U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 1U);
     calculate_kscan_coordinates(&grid, 512U, 512U, GESTURE_TAP, &row, &column);
     assert(row == 0U && column == 2U);
     calculate_kscan_coordinates(&grid, 0U, 256U, GESTURE_TAP, &row, &column);
     assert(row == 0U && column == 3U);
+    /* The centre and the exact diagonals are ties: vertical, and down
+     * unless the finger is above the middle. */
+    calculate_kscan_coordinates(&grid, 512U, 256U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 2U);
+    calculate_kscan_coordinates(&grid, 1024U, 512U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 2U);
+    calculate_kscan_coordinates(&grid, 0U, 0U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 0U);
     assert(get_gesture_type(&grid, 100, 0) == GESTURE_TAP);
 
     /* Exercise every coordinate of small rectangular and diamond panels. */
@@ -80,6 +94,25 @@ int main(void) {
             }
         }
     }
+
+    grid.x = 1024U;
+    grid.y = 512U;
+    grid.diamond_tap = true;
+    grid.rows = 2U;
+    grid.columns = 4U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row < 2U && column < 4U);
+    grid.rows = 1U;
+    grid.columns = 3U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column < 3U);
+    grid.columns = 1U;
+    calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
+    assert(row == 0U && column == 0U);
+    grid.diamond_tap = false;
+    assert(travel_squared(-30, -40) == 2500ULL);
+    assert(get_gesture_type(&grid, -30, -40) == GESTURE_UP);
+    assert(get_gesture_type(&grid, -50, 0) == GESTURE_LEFT);
     puts("matrix geometry: PASS");
     return 0;
 }
