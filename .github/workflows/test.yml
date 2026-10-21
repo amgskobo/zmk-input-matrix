@@ -31,9 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Exercise all driver, proxy and settings scenarios
-        run: |
-          python3 tests/runtime/run.py
-          python3 -m unittest discover -s tests/integration -p 'test_*.py' -v
+        run: bash tests/run-docker.sh
 
   firmware:
     runs-on: ubuntu-latest
