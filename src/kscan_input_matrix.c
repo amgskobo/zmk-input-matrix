@@ -16,12 +16,30 @@
 #include <zephyr/spinlock.h>
 #include <kscan_input_matrix.h>
 
-LOG_MODULE_REGISTER(kscan_matrix, CONFIG_ZMK_LOG_LEVEL);
+#ifndef CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL
+#define CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_input_matrix_kscan_input_matrix, CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL);
+
+struct kscan_matrix_edge {
+    kscan_callback_t callback;
+    uint32_t row;
+    uint32_t column;
+};
 
 struct kscan_matrix_data {
     struct k_spinlock lock;
     kscan_callback_t callback;
     bool enabled;
+    struct zmk_kscan_matrix_claim *claims;
+    size_t claim_count;
+    size_t reserved_releases;
+    struct kscan_matrix_edge edges[CONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE];
+    /* Keep full-width public coordinates without per-edge bool padding. */
+    bool pressed[CONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE];
+    size_t edge_head;
+    size_t edge_count;
+    bool draining;
 };
 
 struct kscan_matrix_config {
@@ -30,6 +48,117 @@ struct kscan_matrix_config {
 };
 
 static bool kscan_matrix_device_valid(const struct device *dev);
+
+/* Caller holds the output lock. Each occupied cell reserves one final edge. */
+static void kscan_matrix_enqueue(struct kscan_matrix_data *data, uint32_t row,
+                                 uint32_t column, bool pressed) {
+    size_t tail = (data->edge_head + data->edge_count) % ARRAY_SIZE(data->edges);
+    data->edges[tail] = (struct kscan_matrix_edge){
+        .callback = data->callback, .row = row, .column = column};
+    data->pressed[tail] = pressed;
+    data->edge_count++;
+}
+
+/* Enter with the caller's output lock; return unlocked. Reuse that
+ * critical section to elect the drainer and pop its first edge.
+ * Reentrant/concurrent callers append; all callbacks remain outside locks. */
+static void kscan_matrix_drain(const struct device *dev, k_spinlock_key_t key) {
+    struct kscan_matrix_data *data = dev->data;
+    if (data->draining || data->edge_count == 0U) {
+        k_spin_unlock(&data->lock, key);
+        return;
+    }
+    data->draining = true;
+    while (data->edge_count != 0U) {
+        struct kscan_matrix_edge edge = data->edges[data->edge_head];
+        bool pressed = data->pressed[data->edge_head];
+        data->edge_head = (data->edge_head + 1U) % ARRAY_SIZE(data->edges);
+        data->edge_count--;
+        k_spin_unlock(&data->lock, key);
+        edge.callback(dev, edge.row, edge.column, pressed);
+        key = k_spin_lock(&data->lock);
+    }
+    data->draining = false;
+    k_spin_unlock(&data->lock, key);
+}
+
+int zmk_kscan_matrix_acquire(const struct device *dev, struct zmk_kscan_matrix_claim *claim,
+                             uint32_t row, uint32_t column) {
+    if (!kscan_matrix_device_valid(dev) || !device_is_ready(dev)) {
+        return -ENODEV;
+    }
+    const struct kscan_matrix_config *cfg = dev->config;
+    if (claim == NULL || row >= cfg->rows || column >= cfg->columns) {
+        return -EINVAL;
+    }
+    struct kscan_matrix_data *data = dev->data;
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    bool occupied = false;
+    for (struct zmk_kscan_matrix_claim *p = data->claims; p != NULL; p = p->next) {
+        if (p == claim) {
+            k_spin_unlock(&data->lock, key);
+            return -EALREADY;
+        }
+        occupied |= p->row == row && p->column == column;
+    }
+    if (!data->enabled || data->callback == NULL) {
+        k_spin_unlock(&data->lock, key);
+        return -EACCES;
+    }
+    if (data->claim_count == CONFIG_ZMK_INPUT_MATRIX_MAX_CLAIMS ||
+        (!occupied && data->edge_count + data->reserved_releases + 2U >
+                          ARRAY_SIZE(data->edges))) {
+        k_spin_unlock(&data->lock, key);
+        return -ENOSPC;
+    }
+    claim->row = row;
+    claim->column = column;
+    claim->next = data->claims;
+    data->claims = claim;
+    data->claim_count++;
+    if (!occupied) {
+        data->reserved_releases++;
+        kscan_matrix_enqueue(data, row, column, true);
+    }
+    kscan_matrix_drain(dev, key);
+    return 0;
+}
+
+int zmk_kscan_matrix_release(const struct device *dev, struct zmk_kscan_matrix_claim *claim) {
+    if (!kscan_matrix_device_valid(dev) || !device_is_ready(dev)) {
+        return -ENODEV;
+    }
+    if (claim == NULL) {
+        return -EINVAL;
+    }
+    struct kscan_matrix_data *data = dev->data;
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    struct zmk_kscan_matrix_claim **link = &data->claims;
+    while (*link != NULL && *link != claim) {
+        link = &(*link)->next;
+    }
+    if (*link == NULL) {
+        k_spin_unlock(&data->lock, key);
+        return -EINVAL;
+    }
+    uint32_t row = claim->row;
+    uint32_t column = claim->column;
+    *link = claim->next;
+    claim->next = NULL;
+    data->claim_count--;
+    bool occupied = false;
+    for (struct zmk_kscan_matrix_claim *p = data->claims; p != NULL; p = p->next) {
+        occupied |= p->row == row && p->column == column;
+    }
+    if (!occupied) {
+        data->reserved_releases--;
+        if (data->enabled && data->callback != NULL) {
+            kscan_matrix_enqueue(data, row, column, false);
+        }
+    }
+    kscan_matrix_drain(dev, key);
+    return 0;
+}
 
 /**
  * @brief Public API to report gesture events to the matrix.
@@ -60,7 +189,6 @@ void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row, uint3
     k_spin_unlock(&data->lock, key);
 
     if (callback) {
-        LOG_DBG("Reporting KSCAN event: Row %u, Column %u, Pressed %d", row, column, pressed);
         callback(dev, row, column, pressed);
     }
 }

@@ -1,7 +1,10 @@
 # Copyright (c) 2026 amgskobo
 # SPDX-License-Identifier: MIT
 
-"""Exercise production driver code with host stubs and require full coverage of it.
+"""Exercise all production-driver scenarios in quick or full host mode.
+
+Quick runs every fixture under ASan/UBSan. Full additionally executes the
+optimized and measured coverage variants and retains the coverage gate below.
 
 Each fixture names a source file, the functions whose lines and branches it
 gates, and any further functions it only needs in order to compile. They are
@@ -20,6 +23,15 @@ import pathlib
 import re
 import subprocess
 import tempfile
+
+import os
+
+mode = os.environ.get("ZMK_TEST_MODE", "quick")
+if mode not in ("quick", "full"):
+    raise SystemExit("ZMK_TEST_MODE must be quick or full")
+variants = (('optimized', ['-O2']), ('sanitized', ['-O1', '-g', '-fno-omit-frame-pointer', '-fsanitize=address,undefined', '-fno-sanitize-recover=all']), ('coverage', ['-O0', '--coverage']))
+if mode == "quick":
+    variants = tuple(v for v in variants if v[0] == "sanitized")
 
 root = pathlib.Path(__file__).resolve().parents[2]
 source_dir = root / "src"
@@ -40,10 +52,15 @@ fixtures = (
     ("driver", "input_processor_matrix.c", (
         "zip_matrix_params_snapshot",
         "zip_matrix_live_config",
-        "zip_matrix_may_suppress_key",
+        "zip_matrix_filter_button",
+        "zip_matrix_finish_frame",
+        "zip_matrix_clear_position",
         "hold_work_handler",
         "stream_for_event",
         "zip_matrix_resync_stream",
+        "zip_matrix_reduce_contact",
+        "zip_matrix_apply_effects",
+        "zip_matrix_process_event",
         "zip_matrix_handle_event",
         "zip_matrix_init",
         "zip_matrix_device_valid",
@@ -55,6 +72,10 @@ fixtures = (
     ), geometry),
     ("kscan", "kscan_input_matrix.c", (
         "zmk_kscan_matrix_report_event",
+        "kscan_matrix_enqueue",
+        "kscan_matrix_drain",
+        "zmk_kscan_matrix_acquire",
+        "zmk_kscan_matrix_release",
         "kscan_matrix_configure",
         "kscan_matrix_enable_callback",
         "kscan_matrix_disable_callback",
@@ -181,12 +202,8 @@ def ungated_functions():
     return missing
 
 
-missing_functions = ungated_functions()
-if missing_functions:
-    raise RuntimeError("functions no fixture gates:\n  " + "\n  ".join(missing_functions))
-
-for fixture, file_name, gated, support in fixtures:
-    source_path = source_dir / file_name
+def render_fixture(fixture, file_name, gated, support, source_path=None):
+    source_path = source_path or source_dir / file_name
     source = source_path.read_text(encoding="utf-8")
     functions = []
     ranges = []
@@ -203,31 +220,69 @@ for fixture, file_name, gated, support in fixtures:
     harness = harness_path.read_text(encoding="utf-8")
     marker = "/* DRIVER_FUNCTIONS */"
     resume = harness.count("\n", 0, harness.index(marker)) + 2
-    with tempfile.TemporaryDirectory(prefix=f"{fixture}-runtime-") as folder:
-        work = pathlib.Path(folder)
-        unit = work / "test.c"
-        unit.write_text(harness.replace(marker, "\n".join(functions) +
-                                        f'\n#line {resume} "{harness_path}"'), encoding="utf-8")
-        for variant, flags in (
-            ("optimized", ["-O2"]),
-            ("sanitized", ["-O1", "-g", "-fno-omit-frame-pointer",
-                           "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]),
-            ("coverage", ["-O0", "--coverage"]),
-        ):
-            binary = work / variant
-            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
-                            "-I" + str(root / "include"), "-I" + str(source_dir),
-                            "-I" + str(root / "tests/runtime"),
-                            str(unit), *map(str, links), "-o", str(binary)],
-                           check=True)
-            subprocess.run([str(binary)], check=True)
-        subprocess.run(["gcov", "-b", "-c", "-o", str(work / "coverage-test.gcno"), str(unit)],
-                       cwd=work, check=True, capture_output=True, text=True)
-        report = (work / f"{file_name}.gcov").read_text(encoding="utf-8")
-        lines, executed, branches, taken, missed = misses(report, ranges)
-        count = sum(not name.startswith("#") for name in gated)
-        print(f"{fixture}: {count} functions of {file_name}: "
-              f"lines {executed}/{lines}, branches {taken}/{branches}")
-        if missed:
-            print("\n".join(missed))
-            raise RuntimeError(f"{fixture} fell below 100% coverage")
+    if "/* DRIVER_TYPES */" in harness:
+        types = []
+        names = ("kscan_matrix_edge", "kscan_matrix_data", "kscan_matrix_config") if fixture == "kscan" else (
+            "zip_matrix_config", "zip_matrix_contact", "zip_matrix_buttons", "zip_matrix_effects",
+            "zip_matrix_stream", "zip_matrix_data")
+        if fixture == "driver":
+            for name in ("gesture_type", "zip_matrix_key_action"):
+                match = re.search(r"^enum " + name + r" \{.*?^\};", source, re.M | re.S)
+                if match is None:
+                    raise RuntimeError("missing enum: " + name)
+                types.append(match.group())
+            types.append("struct zip_matrix_data;")
+        for name in names:
+            match = re.search(r"^struct " + name + r" \{.*?^\};", source, re.M | re.S)
+            if match is None:
+                raise RuntimeError("missing structure: " + name)
+            types.append(match.group())
+        harness = harness.replace("/* DRIVER_TYPES */", "\n".join(types))
+    return harness.replace(marker, "\n".join(functions) +
+                           f'\n#line {resume} "{harness_path}"'), ranges
+
+
+def main():
+    missing_functions = ungated_functions()
+    if missing_functions:
+        raise RuntimeError("functions no fixture gates:\n  " + "\n  ".join(missing_functions))
+
+    for fixture, file_name, gated, support in fixtures:
+        unit_text, ranges = render_fixture(fixture, file_name, gated, support)
+        with tempfile.TemporaryDirectory(prefix=f"{fixture}-runtime-") as folder:
+            work = pathlib.Path(folder)
+            unit = work / "test.c"
+            unit.write_text(unit_text, encoding="utf-8")
+            for variant, flags in variants:
+                binary = work / variant
+                subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
+                                "-I" + str(root / "include"), "-I" + str(source_dir),
+                                "-I" + str(root / "tests/runtime"),
+                                str(unit), *map(str, links), "-o", str(binary)],
+                               check=True)
+                subprocess.run([str(binary)], check=True)
+            if fixture == "kscan":
+                binary = work / "wide-queue-sanitized"
+                subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
+                                "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
+                                "-DCONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE=35",
+                                str(unit), "-o", str(binary)], check=True)
+                subprocess.run([str(binary)], check=True)
+                print("kscan: non-power-of-two 35-edge FIFO wrap and edge polarity PASS")
+            if mode == "quick":
+                print(f"{fixture}: PASS (all scenarios, ASan/UBSan)")
+                continue
+            subprocess.run(["gcov", "-b", "-c", "-o", str(work / "coverage-test.gcno"), str(unit)],
+                           cwd=work, check=True, capture_output=True, text=True)
+            report = (work / f"{file_name}.gcov").read_text(encoding="utf-8")
+            lines, executed, branches, taken, missed = misses(report, ranges)
+            count = sum(not name.startswith("#") for name in gated)
+            print(f"{fixture}: {count} functions of {file_name}: "
+                  f"lines {executed}/{lines}, branches {taken}/{branches}")
+            if missed:
+                print("\n".join(missed))
+                raise RuntimeError(f"{fixture} fell below 100% coverage")
+
+
+if __name__ == "__main__":
+    main()

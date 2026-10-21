@@ -18,7 +18,10 @@
 #include <zmk-input-matrix/custom_settings.h>
 #include <zmk-input-matrix/matrix_runtime.h>
 
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+#ifndef CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL
+#define CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_input_matrix_input_processor_matrix_custom_settings, CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL);
 
 static bool matrix_namespace_handler(const zmk_custom_CallRequest *request,
                                      pb_callback_t *encode_response);
@@ -58,16 +61,14 @@ static bool matrix_namespace_handler(const zmk_custom_CallRequest *request,
         ZMK_CUSTOM_SETTING_PERMISSION_SECURE, ZMK_CUSTOM_SETTING_RANGE_INT32(minimum, maximum));
 
 #define MATRIX_SETTINGS(n)                                                                         \
-    ZMK_INPUT_MATRIX_ASSERT_NAME_FITS(n, "suppress_btn_touch")                                   \
+    ZMK_INPUT_MATRIX_ASSERT_NAME_FITS(n, "flick_threshold")                                   \
     MATRIX_BOOL_SETTING(n, enabled, "enabled", true)                                              \
     MATRIX_INT_SETTING(n, flick_threshold, "flick_threshold", DT_INST_PROP(n, flick_threshold),  \
                        1, UINT16_MAX)                                                               \
     MATRIX_INT_SETTING(n, long_press_ms, "long_press_ms", DT_INST_PROP(n, long_press_ms), 0,     \
                        UINT16_MAX)                                                                  \
-    MATRIX_BOOL_SETTING(n, suppress_abs, "suppress_abs", DT_INST_PROP(n, suppress_abs))           \
-    MATRIX_BOOL_SETTING(n, suppress_btn_touch, "suppress_btn_touch",                              \
-                        DT_INST_PROP(n, suppress_btn_touch))                                        \
-    MATRIX_BOOL_SETTING(n, suppress_key, "suppress_key", DT_INST_PROP(n, suppress_key))
+    MATRIX_BOOL_SETTING(n, suppress_abs, "suppress_abs", DT_INST_PROP(n, suppress_abs))
+
 
 DT_INST_FOREACH_STATUS_OKAY(MATRIX_SETTINGS)
 
@@ -102,8 +103,6 @@ static bool read_int32(const struct zmk_custom_setting *setting, int32_t *out)
             read_int32(&matrix_cs_flick_threshold_##n, &flick_threshold) &&                        \
             read_int32(&matrix_cs_long_press_ms_##n, &long_press_ms) &&                            \
             read_bool(&matrix_cs_suppress_abs_##n, &params.suppress_abs) &&                        \
-            read_bool(&matrix_cs_suppress_btn_touch_##n, &params.suppress_btn_touch) &&            \
-            read_bool(&matrix_cs_suppress_key_##n, &params.suppress_key) &&                        \
             flick_threshold > 0 && flick_threshold <= UINT16_MAX && long_press_ms >= 0 &&          \
             long_press_ms <= UINT16_MAX) {                                                         \
             params.flick_threshold = (uint16_t)flick_threshold;                                    \
@@ -119,7 +118,11 @@ static void matrix_apply_settings(void)
 
 static int matrix_settings_event_cb(const zmk_event_t *eh)
 {
-    ARG_UNUSED(eh);
+    const struct zmk_custom_setting_changed *changed = as_zmk_custom_setting_changed(eh);
+    if (changed != NULL &&
+        strcmp(changed->setting->custom_subsystem_id, ZMK_INPUT_MATRIX_SUBSYSTEM) != 0) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
     matrix_apply_settings();
     return ZMK_EV_EVENT_BUBBLE;
 }

@@ -1,0 +1,19 @@
+/* Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
+#include "../../integration/firmware/boards/shields/matrix_test/matrix_test.overlay"
+#include "../../integration/firmware/boards/shields/matrix_test/matrix_test.keymap"
+#include <dt-bindings/zmk/kscan_mock.h>
+
+&matrix { long-press-ms = <20>; };
+&matrix_source_left { events = <>; };
+&matrix_source_right { events = <>; };
+&kscan { events = <ZMK_MOCK_PRESS(0, 0, 30000)>; };
+/ {
+    keymap {
+        extra {
+            bindings = <&trans &trans &trans &trans &trans
+                        &trans &trans &trans &trans &trans>;
+        };
+    };
+};

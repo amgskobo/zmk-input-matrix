@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+rsource "../kernel/module/Kconfig"
+
+# Optional, explicitly selected producer checkout; never fetch a dependency.
+osource "$(MATRIX_TEST_IQS_ROOT)/Kconfig"
+config MATRIX_IQS_SOURCE_TEST
+    bool "Actual IQS click producer in Matrix native fixture"
+    depends on IQS7211E
+
+config MATRIX_IQS_INLINE_FIRST
+    bool "Negative control: emit first IQS edge inline"
+    depends on MATRIX_IQS_SOURCE_TEST
+
+config MATRIX_IQS_DROP_RELEASE
+    bool "Negative control: omit delivery of the IQS OFF"
+    depends on MATRIX_IQS_SOURCE_TEST

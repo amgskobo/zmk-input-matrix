@@ -15,8 +15,6 @@ struct zip_matrix_runtime_params {
     uint16_t flick_threshold;
     uint16_t long_press_ms;
     bool suppress_abs;
-    bool suppress_btn_touch;
-    bool suppress_key;
 };
 
 int zip_matrix_get_params(const struct device *dev, struct zip_matrix_runtime_params *out);

@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "host": [
+    "bash",
+    "tests/run-docker.sh"
+  ],
+  "contracts": [
+    {
+      "fixture": "tests/runtime/geometry_harness.c",
+      "asserts": "Grid/diamond geometry and boundary classification"
+    },
+    {
+      "fixture": "tests/runtime/driver_harness.c",
+      "asserts": "Gesture/contact generations, hold/cancel and balanced releases, release-callback reset, route-shared button disposition and pending-frame lifetime Original unmatched BTN_0..BTN_15 up passthrough, zero/negative polarity, independent-stream pair state; BTN_TOUCH remains internal."
+    },
+    {
+      "fixture": "tests/runtime/kscan_harness.c",
+      "asserts": "Virtual KSCAN output contract"
+    },
+    {
+      "fixture": "tests/runtime/custom_settings_harness.c",
+      "asserts": "Settings validation and reset"
+    }
+  ],
+  "kernel": [
+    "bash",
+    "tests/kernel/run.sh",
+    "<resolved-west-workspace>"
+  ],
+  "kernel_contracts": [
+    {
+      "fixture": "tests/kernel/module/main.c",
+      "asserts": "Six real-workqueue scenarios: two-stream delayed holds and ordered releases, overdue release cancellation, pending/escaped-hold settings disable, and pending/escaped-hold layer changes; exact KSCAN edges and raw timestamps"
+    }
+  ],
+  "limits": "Six real-kernel scenarios cover queued hold cancellation and balanced KSCAN callbacks; downstream KSCAN queue, physical HID/split delivery and exhaustive interleavings remain separate.",
+  "execution": {
+    "default": "quick: every behavioral fixture and scenario under ASan/UBSan once",
+    "full": "ZMK_TEST_MODE=full: same scenarios plus optimized, coverage and existing 32-bit variants",
+    "integration": "owner native/DTS/API guards when interfaces or kernel contracts change; not a prerequisite for pure host behavior",
+    "transport": "actual ordered USB/BLE/split/power/reset evidence; archived simulation is not a passing substitute"
+  },
+  "infrastructure": {
+    "fixtures": [
+      {
+        "fixture": "tests/integration/test_offline.py",
+        "asserts": "Exact supported core/dependency pins, clean sources, missing inputs, safe project paths, fresh outputs and pinned custom-settings archive; identity bypass negative control"
+      },
+      {
+        "fixture": "tests/integration/test_output_guard.py",
+        "asserts": "Existing directories, directory symlinks and dangling symlinks preserve prior evidence and invoke no west command"
+      },
+      {
+        "fixture": "tests/integration/test_docker_entry.py",
+        "asserts": "Read-only actual IQS checkout and required mode cross Docker; missing/invalid producer rejects before Docker/west, existing/symlink outputs preserve evidence and child failures propagate."
+      }
+    ],
+    "entry": "tests/integration/run.sh",
+    "preparation": "Explicit pinned offline workspace; local unchanged ZMK clone and original fixture manifest; no fetch or source repair",
+    "limits": "Admission tests control dependency responses. Actual native/API/firmware fixtures separately verify unchanged stock ZMK and DYA. Physical transport remains separate."
+  },
+  "ownership": {
+    "entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --regressions-only",
+    "asserts": "45 real-kernel Matrix scenarios, three identical-binary runs each: output-wide claims, overlap, independent processors/streams, actual HID state, reset/layer/reentry/concurrent callbacks; paired suppression, repeats, negative values and touch aliases across retained/departed routes; pending-frame sync across KEY/ABS suppression and settings/layer resets. Fixtures: scan.c and lifecycle_cases.h.",
+    "host_capacity": "kscan_harness: atomic claim/queue refusal, reserved final releases, duplicate/orphan/invalid claims, disabled output, reentry and recovery; driver_harness: rejected hold/tap and successful subsequent hold; exact edge values/order with a 35-edge non-power-of-two FIFO through wraparound",
+    "observations": "Required release/recovery assertions execute after all OFFs. Original duration/independence checks and synthetic ON/ON/OFF outside Matrix remain a separate strict selection with normal expected-PASS assertions and nonzero failure exits; no accepted negative observations. Debug observation: a runtime-disabled route reentry may lose its first ON due to an unobserved prior OFF; the completed pair resynchronizes and a following fresh pair succeeds. Strict mode detects that loss.",
+    "negative_control": "inactive-matrix.overlay removes Matrix and must fail matrix-key-isolation by name. iqs-inline-first calls the real producer inline and must fail both before-ON cases by name. Three repeats per core. Empty legacy selector removed after source/failure archival; its two assertions remain normal regressions. iqs-drop-release omits delivery of the actual OFF and must fail the final held-button assertion3/3.",
+    "iqs_producer": {
+      "entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --regressions-only --iqs-root RESOLVED_IQS",
+      "asserts": "17 cases use unchanged complete IQS source: private-queue first ON,20ms source edges, double/triple, replacement, routes before/after ON, all OFF work, final release/recovery and ordered traces. Strict mode preserves exact overlap ownership/duration assertion.",
+      "selection": "45 Matrix +17 IQS =62. No explicit producer means IQS NOT RUN.",
+      "limits": "Gesture-to-click handoff; no full sensor frames/I2C/RDY/production abs2rel/PM retries/separate peripheral queues/split/physical host delivery."
+    },
+    "acceptance": "Balanced source ON/OFF pairs complete; final mouse buttons/virtual keys release and a fresh pointer click works. Early release across routes is permitted and logged.",
+    "strict_entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --regressions-only --iqs-root RESOLVED_IQS --strict-clicks",
+    "strict_failures": [
+      "route-suppressed-release",
+      "route-touch-alias",
+      "route-forwarded-repeat",
+      "iqs-overlap",
+      "route-forwarded-pairs (first reentry click delivery)"
+    ],
+    "normal_route_sequence": "route-forwarded-pairs: complete ON/OFF pairs across route changes and recovery. Original route-forwarded-repeat preserved in strict selection."
+  },
+  "efficiency": {
+    "entry": "tests/performance/run.py FRESH_OUTPUT --reference BEFORE_KSCAN_SOURCE",
+    "asserts": "Same canonical conformance before/current; identical callback/checksum results; source identities; raw alternating repeats, CPU and lock counts",
+    "limits": "Host stand-ins and 4-claim/8-edge fixture; no Cortex-M, real-lock, input-latency or power verdict"
+  }
+}

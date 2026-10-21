@@ -1,0 +1,5 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+config MATRIX_KERNEL_TEST
+    bool "Matrix work and release boundary fixture"
+    depends on ZMK_INPUT_PROCESSOR_MATRIX

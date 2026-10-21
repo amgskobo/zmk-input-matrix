@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "owner": "zmk-input-matrix",
+  "supported_cores": [
+    "stock-zmk",
+    "dya"
+  ],
+  "unsupported_core_status": "NOT APPLICABLE",
+  "commands": [
+    "bash tests/run-docker.sh",
+    "python3 -m unittest discover -s tests/integration -p test_*.py -v (inside the Linux build image)",
+    "Explicit offline integration: tests/integration/run.sh; see tests/README.md for pinned workspaces, variant selection and fresh outputs",
+    "Standard integration entries also run tests/deep-scan/run.py --regressions-only on the exact selected core",
+    "python3 tests/performance/run.py FRESH_OUTPUT --reference BEFORE_KSCAN_SOURCE; host CPU/critical-section counts only; see tests/README.md",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --regressions-only --iqs-root RESOLVED_IQS; 45 Matrix + 17 actual IQS producer cases; retired synthetic producer removed, both supported cores",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --iqs-only --negative-control iqs-inline-first; require two named failures three times",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --negative-control inactive-matrix; omit Matrix and require the named isolation failure three times",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --regressions-only --iqs-root RESOLVED_IQS --strict-clicks; five additional strict/robustness checks, known FAIL, nonzero exit",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --iqs-only --negative-control iqs-drop-release; omit OFF delivery and require final held-button failure3/3",
+    "CI firmware entry: ZMK_TEST_REQUIRE_IQS=1 ZMK_TEST_IQS_ROOT=PINNED_IQS ZMK_TEST_OUTPUT=FRESH_OUTPUT bash tests/run-integration-docker.sh upstream|dya; all62 cases required, fresh retained evidence. See tests/README.md."
+  ],
+  "coverage_map": "tests/contract.json",
+  "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
+  "execution": {
+    "quick": "All behavioral scenarios once; sanitizer variants where supported.",
+    "full": "Same scenarios plus relevant optimization, ABI, role, kernel and supported-core checks.",
+    "outputs": "Use a fresh evidence directory; existing evidence is never overwritten."
+  },
+  "gaps": [
+    "Required contract: complete balanced source pairs, final release and recovery; early release across route changes permitted. All45 Matrix plus17 actual IQS cases are required. Source/sensor/split/physical limits remain separate; IQS NOT RUN without explicit checkout.",
+    "STRICT FAIL: --strict-clicks preserves early-release assertions for route-suppressed-release, route-touch-alias, iqs-overlap and held-button robustness for route-forwarded-repeat (synthetic ON/ON/OFF outside Matrix). Each remains expected PASS and exits nonzero on failure. These additional guarantees are outside release-safety acceptance.",
+    "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence.",
+    "Consumer pause/replacement, source removal, unobserved edges on non-Matrix routes, and earlier asymmetric edge filtering require an end-to-end input/consumer ownership contract.",
+    "Arbitrary thread interleavings are not exhaustively proven by the named host/native fixtures.",
+    "STRICT FAIL: route-forwarded-pairs first reentry click may be lost after returning to a runtime-disabled Matrix with an unobserved OFF. One completed pair resynchronizes, next pair works and final state is released. Existing behavior before/after reset refactor; immediate first-click delivery is outside final-release acceptance."
+  ]
+}

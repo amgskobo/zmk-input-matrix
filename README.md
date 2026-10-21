@@ -34,18 +34,32 @@ aliases stream zero.
 
 The delayed long-press handler performs only bounded in-memory state changes
 and KSCAN reporting: it does not sleep, allocate, scan settings, or write
-flash. It intentionally remains on Zephyr's cooperative system work queue so
-a touch release cannot interleave between its paired hold press bookkeeping.
+flash. Contact generations and pending-release bookkeeping reconcile a release
+or settings change that arrives while a hold is being admitted.
+
+When inputs share a virtual output cell, the first active source presses it
+and the final source releases it. A tap over an already held cell leaves that
+cell held. This applies across processor nodes as well as listeners. Independent
+cells retain their own output order. The bounded ownership API defaults to 16
+simultaneous claims and 32 pending/reserved edges per output; adjust
+`CONFIG_ZMK_INPUT_MATRIX_MAX_CLAIMS` and
+`CONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE` for a larger graph. A rejected new
+claim produces no partial press; an accepted claim retains its final release
+capacity. Callback disable/replacement does not promise held-state replay or
+cleanup of the previous consumer.
 
 ## Runtime settings
 
 With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, DYA Studio exposes each
 instance under `amgskobo__matrix`. The editable values are `enabled`,
-`flick_threshold`, `long_press_ms`, `suppress_abs`, `suppress_btn_touch`, and
-`suppress_key`. The registry owns persistence. A settings update invalidates
-every listener stream; a reported hold is released, pending work is cancelled,
-and an input event overlapping the update is discarded instead of being
-processed with mixed parameters.
+`flick_threshold`, `long_press_ms`, and `suppress_abs`. The registry owns persistence. A settings update invalidates
+every listener's gesture state; a reported hold is released and pending work is
+cancelled. The first-press button disposition is retained until release, so
+runtime suppression edits cannot turn a previously forwarded release into a
+suppressed one. Repeated forwarded downs become no-op sync events rather than
+additional mouse presses, preserving pending movement at the frame boundary.
+This pairing still applies while gestures are disabled and across layer changes.
+Place Matrix only on the gesture routes described below. Pair records cover observed events.
 
 `rows`, `columns`, `kscan`, and `diamond-tap` remain devicetree-only because
 they define the virtual matrix and keymap layout rather than live tuning.
@@ -54,6 +68,68 @@ Setting keys begin with the devicetree node name. Keep custom instance node
 names short enough for Zephyr's persisted-settings limit. The module checks
 both the RPC key and full storage name at compile time, so an unsafe name fails
 the build instead of accepting a value that cannot be saved.
+
+### Gesture layer routes
+
+Place Matrix only in the listener routes which need virtual keys. Keep the
+normal pointer/scroll processors on their own routes. There is no common
+Matrix prefix, companion processor or second layer selector on Matrix itself.
+
+```dts
+&zip_matrix { suppress-abs; };
+
+&trackpad_listener {
+    /* Keep the existing default pointer processors here. */
+    gestures {
+        layers = <1>;
+        input-processors = <&zip_matrix>;
+    };
+};
+```
+
+Layer events release reported virtual holds, cancel delayed work and clear
+contact coordinates directly, even after routing stops calling Matrix. They
+do not wait for another input event. Tap uses coordinates, BTN_TOUCH and sync,
+not the touchpad driver's BTN_0 tap click. Active Matrix consumes new KEY
+presses after reading contact state. A BTN_0..BTN_15 release passes unless this
+stream suppressed its press, so an earlier pointer click can finish after
+entering Matrix. BTN_TOUCH remains internal, apart from a release paired with
+an observed pre-activation forwarded down. Virtual KSCAN output is separate.
+
+The module retains click dispositions and pending-frame records for events
+which actually reach it, including runtime enable/disable changes. It cannot
+observe click edges or frame endings on other routes. The supported acceptance
+uses balanced ON/OFF pairs: complete scheduled releases, no final held mouse
+button/virtual key, and recovery of the next pointer click. A route transition
+may release another source's click early; exact cross-route click duration and
+ownership are not guaranteed. Synthetic ON/ON/OFF on a route which bypasses
+Matrix can leave a button held. The owner retains those stricter checks as a
+separate failing command; see [the test boundary](tests/deep-scan/README.md).
+When returning to a runtime-disabled Matrix after an OFF bypassed it, the
+first new ON may be treated as a repeat; a completed pair resynchronizes that
+record and the following click works. Immediate first-click delivery across
+such route reentry is not guaranteed. Virtual-key layer cleanup remains a
+separate verified contract.
+
+A consumed synchronized key or absolute event becomes a zero-valued
+`INPUT_MSC_SCAN` only when earlier forwarded events are awaiting a frame end.
+This preserves their report boundary without emitting a new mouse press.
+Fully suppressed frames produce no empty pointing report. Repeated forwarded
+downs retain the same no-op sync marker.
+
+### Migration from optional KEY forwarding
+
+`suppress_key` and `suppress_btn_touch` are removed from the runtime C structure
+and the custom-settings registry. Remove these fields from callers. Active
+Matrix consumes new KEY presses and their paired releases; it preserves a
+tracked button up whose down was not suppressed here. Select a different
+listener route for normal pointer input. `enabled`
+controls runtime gesture processing. Existing stored values for the removed settings are ignored;
+this change does not erase them. The old `suppress-key` and
+`suppress-btn-touch` Devicetree booleans are accepted only as deprecated legacy
+markers and can be removed. Their absence no longer enables forwarding of new KEY presses.
+Applications depending on simultaneous Matrix gestures and forwarded clicks
+must change their routing before updating.
 
 ## Installation
 
@@ -159,11 +235,17 @@ Layer changes are watched directly so that cannot leave anything behind:
 - A cell this instance has already pressed is released.
 - A hold that is only pending is cancelled, so the timer cannot fire after the layer has changed and press a cell nothing can then release.
 - The contact is closed out - the touch state and the buffered coordinates go the same way as the start point. A contact left marked active with its start cleared is the exact shape the sync path reads as a stroke beginning, so it would latch a new start and re-arm the hold that was just cancelled.
-- The record of which suppressed presses are still outstanding is dropped, so a later unrelated release cannot be swallowed in their place.
+- Button-pair and pending-frame records survive until their matching release
+  and synchronization boundary for events actually observed on that stream.
 
 The event fires on every layer change, including the ones that leave this processor in the chain - a layer key on the keyboard pressed while a finger is on the pad, say. A contact in progress is dropped either way: the pad stays inert until the finger is lifted and placed again.
 
-`suppress-key` never drops a release whose press was not suppressed here. Passing a release through is always safe - the press it belongs to already reached the host - while dropping one would leave that button held down with nothing left to release it.
+Active Matrix consumes new KEY presses and releases paired with suppressed
+downs. A BTN_0..BTN_15 release whose down was not suppressed here still passes,
+including a click begun on a normal route. BTN_TOUCH remains internal apart
+from an observed forwarded pair. Records cover only events reaching this
+stream; a release routed elsewhere cannot consult them. A preceding filter
+that removes only one edge cannot be repaired by this driver.
 
 ### 3. Keymap Configuration
 
@@ -244,8 +326,6 @@ See the [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physica
 | `kscan` | phandle | Required | The `zmk,kscan-input-matrix` proxy that receives the gesture events |
 | `long-press-ms` | int | 200 | Tap hold time (ms), 0 to disable |
 | `suppress-abs` | bool | false | Consume all `INPUT_EV_ABS` events, not only X/Y |
-| `suppress-btn-touch` | bool | true in the supplied `zip_matrix` node | Consume only `INPUT_BTN_TOUCH`. Add the property to custom nodes to enable it; an omitted Devicetree boolean is false. |
-| `suppress-key` | bool | false | Consume all `INPUT_EV_KEY` events, including touchpad button gestures |
 | `diamond-tap` | bool | false | Report taps only, split into D-pad-style diamond zones on a 1x4 grid |
 
 Limits are enforced at build time: `rows` must be 1-51, `columns` 1-255, `x`/`y` 1-65534, `flick-threshold` 1-65535, and `long-press-ms` 0-65535.
@@ -293,16 +373,17 @@ bash ./tests/run-integration-docker.sh dya
 ```
 
 The runtime test lifts the driver's own functions into the stubbed harnesses in
-`tests/runtime/` and runs them optimized, under ASan/UBSan, and with gcov. The
+`tests/runtime/`. Quick runs every host scenario under ASan/UBSan; full also
+runs optimized and gcov variants with the complete line/branch gate. The
 geometry harness checks grid edges, diamond zones, diagonal flick thresholds and
 wide squared travel, then exhausts every coordinate of small rectangular and
 diamond panels. The driver harness plays contacts through the event handler:
 taps, flicks that follow the farthest point, long-press holds, touches and
 settings writes landing while a hold is being pressed, paired key suppression,
 per-listener streams and layer-change releases. Two more cover the virtual KSCAN
-proxy and the settings helpers. CI requires 100% line and branch coverage of
-each lifted function: seven geometry functions, twelve driver functions and the
-layer listener, six proxy functions and the settings bridge. The apply step that
+proxy and the settings helpers. Full-mode CI requires 100% line and branch coverage of
+each lifted function: seven geometry functions, eighteen driver functions (including the layer
+listener and layer cleanup), ten proxy functions and the settings bridge. The apply step that
 turns stored settings into driver calls is lifted with its macro too, and the
 runner fails if any function in the sources has no gate. Devicetree
 instantiation itself is left to the firmware fixtures below.
@@ -311,9 +392,15 @@ Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are
 enabled. `upstream` builds against ZMK `main` and confirms that the custom
 settings stay off; `dya` builds against the DYA ZMK fork with custom settings on
-and confirms that the `amgskobo__matrix` subsystem and every setting
+and confirms that the `amgskobo__matrix` subsystem and all setting
 keys are linked into the firmware. GitHub Actions runs both on every pull
 request, on pushes to `main`, and weekly.
+
+The integration variants run six focused kernel scenarios and 45 Matrix
+ownership/route/frame cases three times per binary. With the required pinned
+IQS producer, both CI firmware jobs add 17 actual-producer cases (62 total).
+They use actual delayed work, layer events and the KSCAN proxy recording callback;
+see [the test guide](tests/README.md) for a prepared-workspace command and transport limits.
 
 ## License
 

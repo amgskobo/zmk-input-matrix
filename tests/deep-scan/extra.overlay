@@ -1,0 +1,32 @@
+/* SPDX-License-Identifier: MIT */
+/ {
+    matrix_secondary: matrix_secondary {
+        compatible = "zmk,input-processor-matrix";
+        #input-processor-cells = <0>;
+        rows = <1>;
+        columns = <2>;
+        x = <1024>;
+        y = <1024>;
+        flick-threshold = <50>;
+        long-press-ms = <20>;
+
+        kscan = <&matrix_kscan>;
+    };
+};
+
+/ {
+    keymap {
+        passthrough_layer { bindings = <&trans &trans &trans &trans &trans
+                                       &trans &trans &trans &trans &trans>; };
+        unrelated_layer { bindings = <&trans &trans &trans &trans &trans
+                                     &trans &trans &trans &trans &trans>; };
+    };
+};
+&{/matrix_listener_left} {
+    pointer { layers = <2>; };
+    gestures { layers = <1>; input-processors = <&matrix>; };
+};
+&{/matrix_listener_right} {
+    pointer { layers = <2>; };
+    gestures { layers = <1>; input-processors = <&matrix>; };
+};

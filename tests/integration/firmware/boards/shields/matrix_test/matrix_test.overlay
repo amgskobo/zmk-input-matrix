@@ -79,7 +79,7 @@
         y = <1024>;
         flick-threshold = <50>;
         long-press-ms = <300>;
-        suppress-btn-touch;
+
         kscan = <&matrix_kscan>;
     };
 

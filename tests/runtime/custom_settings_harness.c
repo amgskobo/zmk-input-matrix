@@ -41,8 +41,10 @@ static size_t settings_len;
 #define ZMK_CUSTOM_SETTING_FOREACH(_var)                                                           \
     for (struct zmk_custom_setting *_var = settings; _var < settings + settings_len; _var++)
 
+static unsigned reads;
 static int zmk_custom_setting_read(const struct zmk_custom_setting *setting,
                                    struct zmk_custom_setting_value *value) {
+    reads++;
     *value = setting->value;
     return setting->read_result;
 }
@@ -52,21 +54,26 @@ static int zmk_custom_setting_read(const struct zmk_custom_setting *setting,
 #define ZMK_EV_EVENT_BUBBLE 0
 #define DT_INST_FOREACH_STATUS_OKAY(fn) fn(0)
 #define DEVICE_DT_INST_GET(n) (&instance)
-typedef struct { int kind; } zmk_event_t;
+typedef struct { int kind; const struct zmk_custom_setting *setting; } zmk_event_t;
+struct zmk_custom_setting_changed { const struct zmk_custom_setting *setting; };
+static struct zmk_custom_setting_changed changed_event;
+static const struct zmk_custom_setting_changed *as_zmk_custom_setting_changed(const zmk_event_t *eh) {
+    if (eh->kind != 1) return NULL;
+    changed_event.setting = eh->setting;
+    return &changed_event;
+}
 struct device { int unused; };
 static struct device instance;
 #define BOOL_SETTING(name, v)                                                                      \
-    static struct zmk_custom_setting name = {                                                      \
+    static struct zmk_custom_setting name = {.custom_subsystem_id = ZMK_INPUT_MATRIX_SUBSYSTEM,                                                      \
         .value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = (v)}}
 #define INT_SETTING(name, v)                                                                       \
-    static struct zmk_custom_setting name = {                                                      \
+    static struct zmk_custom_setting name = {.custom_subsystem_id = ZMK_INPUT_MATRIX_SUBSYSTEM,                                                      \
         .value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = (v)}}
 BOOL_SETTING(matrix_cs_enabled_0, true);
 INT_SETTING(matrix_cs_flick_threshold_0, 120);
 INT_SETTING(matrix_cs_long_press_ms_0, 300);
 BOOL_SETTING(matrix_cs_suppress_abs_0, true);
-BOOL_SETTING(matrix_cs_suppress_btn_touch_0, false);
-BOOL_SETTING(matrix_cs_suppress_key_0, true);
 static int applies;
 static struct zip_matrix_runtime_params applied;
 
@@ -136,15 +143,14 @@ static void test_unique_keys(void) {
 
 /* The six values are applied as one set, only when all read and fit. */
 static void test_apply(void) {
-    const zmk_event_t changed = {1};
+    const zmk_event_t changed = {1, &matrix_cs_enabled_0};
     assert(matrix_settings_event_cb(&changed) == ZMK_EV_EVENT_BUBBLE);
     assert(applies == 1 && applied.enabled && applied.flick_threshold == 120);
     assert(applied.long_press_ms == 300 && applied.suppress_abs);
-    assert(!applied.suppress_btn_touch && applied.suppress_key);
 
     struct zmk_custom_setting *values[] = {
         &matrix_cs_enabled_0, &matrix_cs_flick_threshold_0, &matrix_cs_long_press_ms_0,
-        &matrix_cs_suppress_abs_0, &matrix_cs_suppress_btn_touch_0, &matrix_cs_suppress_key_0};
+        &matrix_cs_suppress_abs_0};
     for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
         values[i]->read_result = -2;
         matrix_apply_settings();
@@ -178,6 +184,15 @@ int main(void) {
     test_readers();
     test_unique_keys();
     test_apply();
+    const struct zmk_custom_setting foreign = {.custom_subsystem_id="other__module"};
+    const zmk_event_t unrelated = {1, &foreign};
+    const unsigned before_reads = reads;
+    const int before_applies = applies;
+    assert(matrix_settings_event_cb(&unrelated) == ZMK_EV_EVENT_BUBBLE);
+    assert(reads == before_reads && applies == before_applies);
+    const zmk_event_t initialized = {0, NULL};
+    assert(matrix_settings_event_cb(&initialized) == ZMK_EV_EVENT_BUBBLE);
+    assert(reads > before_reads);
     puts("matrix custom settings helpers: PASS");
     return 0;
 }

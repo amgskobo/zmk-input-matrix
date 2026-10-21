@@ -47,16 +47,12 @@ properties:
       later processors or the mouse HID.
   suppress-btn-touch:
     type: boolean
-    description: |
-      If true, consume only INPUT_BTN_TOUCH after this processor updates its
-      internal touch state. Other INPUT_EV_KEY events, such as button gestures
-      emitted by the touchpad driver, continue downstream.
+    deprecated: true
+    description: Legacy marker; remove it. Active Matrix consumes new KEY presses; unpaired tracked button releases pass.
   suppress-key:
     type: boolean
-    description: |
-      If true, consume all INPUT_EV_KEY events seen by this processor, not only
-      INPUT_BTN_TOUCH. This prevents KEY events from reaching later processors or
-      behaviors.
+    deprecated: true
+    description: Legacy marker; remove it. Active Matrix consumes new KEY presses; unpaired tracked button releases pass.
   kscan:
     type: phandle
     required: true

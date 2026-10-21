@@ -29,6 +29,8 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 /* Unevaluated printf() keeps the format strings checked and the arguments used. */
 #define LOG_DBG(fmt, ...) ((void)sizeof(printf(fmt, ##__VA_ARGS__)))
 #define K_MSEC(ms) ((k_timeout_t){(ms)})
+#define INPUT_EV_MSC 0x04
+#define INPUT_MSC_SCAN 0x04
 #define INPUT_EV_KEY 0x01
 #define INPUT_EV_REL 0x02
 #define INPUT_EV_ABS 0x03
@@ -51,53 +53,11 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 #define DEVICE_DT_INST_GET(n) (&matrix)
 typedef struct { int kind; } zmk_event_t;
 
-enum gesture_type { GESTURE_TAP, GESTURE_UP, GESTURE_DOWN, GESTURE_LEFT, GESTURE_RIGHT };
-
-struct zip_matrix_config {
-    uint8_t rows;
-    uint8_t columns;
-    uint16_t x;
-    uint16_t y;
-    uint16_t flick_threshold;
-    uint16_t long_press_ms;
-    bool suppress_abs;
-    bool suppress_btn_touch;
-    bool suppress_key;
-    bool diamond_tap;
-    const struct device *kscan_dev;
+struct zmk_kscan_matrix_claim {
+    struct zmk_kscan_matrix_claim *next;
+    uint32_t row, column;
 };
-struct zip_matrix_data;
-struct zip_matrix_stream {
-    struct k_spinlock lock;
-    struct zip_matrix_data *owner;
-    uint16_t current_x;
-    uint16_t current_y;
-    bool is_btn_touch;
-    uint16_t start_x;
-    uint16_t start_y;
-    const struct device *kscan_dev;
-    struct k_work_delayable hold_work;
-    bool is_holding;
-    bool hold_reported;
-    bool hold_release_pending;
-    bool flick_latched;
-    enum gesture_type flick_gesture;
-    uint64_t flick_max_travel;
-    uint8_t hold_row;
-    uint8_t hold_column;
-    uint32_t contact_id;
-    uint32_t hold_contact_id;
-    uint16_t suppressed_btns;
-    atomic_t applied_generation;
-};
-struct zip_matrix_data {
-    const struct zip_matrix_config *config;
-    const struct device *kscan_dev;
-    struct k_spinlock params_lock;
-    struct zip_matrix_runtime_params params;
-    atomic_t reset_generation;
-    struct zip_matrix_stream streams[ZIP_MATRIX_STREAM_COUNT];
-};
+/* DRIVER_TYPES */
 
 static struct device matrix;
 static struct device kscan = {.name = "kscan"};
@@ -154,6 +114,22 @@ static void zmk_kscan_matrix_report_event(const struct device *dev, uint32_t row
     }
 }
 
+static bool reject_acquire;
+static int zmk_kscan_matrix_acquire(const struct device *dev,
+                                    struct zmk_kscan_matrix_claim *claim,
+                                    uint32_t row, uint32_t column) {
+    if (reject_acquire) { return -ENOSPC; }
+    claim->row = row;
+    claim->column = column;
+    zmk_kscan_matrix_report_event(dev, row, column, true);
+    return 0;
+}
+static int zmk_kscan_matrix_release(const struct device *dev,
+                                    struct zmk_kscan_matrix_claim *claim) {
+    zmk_kscan_matrix_report_event(dev, claim->row, claim->column, false);
+    return 0;
+}
+
 /* DRIVER_FUNCTIONS */
 
 static struct zip_matrix_data data;
@@ -163,20 +139,20 @@ static struct zmk_input_processor_state second = {.input_device_index = 1};
 static struct zip_matrix_stream *stream(size_t index) { return &data.streams[index]; }
 
 static void expect_no_hold(size_t index) {
-    assert(!stream(index)->is_holding && !stream(index)->hold_reported);
-    assert(!stream(index)->hold_release_pending);
+    assert(!stream(index)->contact.is_holding && !stream(index)->contact.hold_reported);
+    assert(!stream(index)->contact.hold_release_pending);
 }
 
 static void expect_positions_forgotten(size_t index) {
-    assert(stream(index)->start_x == COORD_UNINITIALIZED &&
-           stream(index)->start_y == COORD_UNINITIALIZED);
-    assert(stream(index)->current_x == COORD_UNINITIALIZED &&
-           stream(index)->current_y == COORD_UNINITIALIZED);
+    assert(stream(index)->contact.start_x == COORD_UNINITIALIZED &&
+           stream(index)->contact.start_y == COORD_UNINITIALIZED);
+    assert(stream(index)->contact.current_x == COORD_UNINITIALIZED &&
+           stream(index)->contact.current_y == COORD_UNINITIALIZED);
 }
 
 static void expect_no_flick(size_t index) {
-    assert(!stream(index)->flick_latched && stream(index)->flick_gesture == GESTURE_TAP);
-    assert(stream(index)->flick_max_travel == 0U);
+    assert(!stream(index)->contact.flick_latched && stream(index)->contact.flick_gesture == GESTURE_TAP);
+    assert(stream(index)->contact.flick_max_travel == 0U);
 }
 
 static int send_to(struct zmk_input_processor_state *state, uint16_t type, uint16_t code,
@@ -185,6 +161,9 @@ static int send_to(struct zmk_input_processor_state *state, uint16_t type, uint1
     const int ret = zip_matrix_handle_event(&matrix, &event, 0, 0, state);
     if (ret == ZMK_INPUT_PROC_STOP) {
         assert(event.code == COORD_INVALID_ZERO && !event.sync);
+    } else if (event.type == INPUT_EV_MSC) {
+        assert(type == INPUT_EV_KEY || type == INPUT_EV_ABS || type == INPUT_EV_REL);
+        assert(event.code == INPUT_MSC_SCAN && event.value == 0 && event.sync == sync);
     } else {
         assert(event.code == code && event.sync == sync);
     }
@@ -231,9 +210,7 @@ static struct zip_matrix_runtime_params params_of(bool enabled, uint16_t thresho
                                                   uint16_t long_press) {
     return (struct zip_matrix_runtime_params){.enabled = enabled, .flick_threshold = threshold,
                                               .long_press_ms = long_press,
-                                              .suppress_abs = true,
-                                              .suppress_btn_touch = true,
-                                              .suppress_key = false};
+                                              .suppress_abs = true};
 }
 
 static void test_api(void) {
@@ -255,14 +232,14 @@ static void test_api(void) {
     assert(zip_matrix_init(&matrix) == -EINVAL);
     matrix.config = &config;
     for (size_t i = 0; i < ZIP_MATRIX_STREAM_COUNT; i++) {
-        stream(i)->is_btn_touch = stream(i)->is_holding = stream(i)->hold_reported = true;
-        stream(i)->hold_release_pending = stream(i)->flick_latched = true;
-        stream(i)->flick_gesture = GESTURE_UP;
-        stream(i)->flick_max_travel = 9;
-        stream(i)->start_x = stream(i)->start_y = 5;
-        stream(i)->current_x = stream(i)->current_y = 5;
-        stream(i)->contact_id = stream(i)->hold_contact_id = 7;
-        stream(i)->suppressed_btns = 3;
+        stream(i)->contact.is_btn_touch = stream(i)->contact.is_holding = stream(i)->contact.hold_reported = true;
+        stream(i)->contact.hold_release_pending = stream(i)->contact.flick_latched = true;
+        stream(i)->contact.flick_gesture = GESTURE_UP;
+        stream(i)->contact.flick_max_travel = 9;
+        stream(i)->contact.start_x = stream(i)->contact.start_y = 5;
+        stream(i)->contact.current_x = stream(i)->contact.current_y = 5;
+        stream(i)->contact.contact_id = stream(i)->contact.hold_contact_id = 7;
+        stream(i)->buttons.suppressed = 3;
         stream(i)->applied_generation = 4;
     }
     data.reset_generation = 4;
@@ -272,8 +249,8 @@ static void test_api(void) {
         expect_no_hold(i);
         expect_no_flick(i);
         expect_positions_forgotten(i);
-        assert(!stream(i)->is_btn_touch && stream(i)->suppressed_btns == 0);
-        assert(stream(i)->contact_id == 0 && stream(i)->hold_contact_id == 0);
+        assert(!stream(i)->contact.is_btn_touch && stream(i)->buttons.suppressed == 0);
+        assert(stream(i)->contact.contact_id == 0 && stream(i)->contact.hold_contact_id == 0);
         assert(stream(i)->applied_generation == 0);
     }
     assert(data.kscan_dev == &kscan && stream(1)->owner == &data);
@@ -296,12 +273,12 @@ static void test_api(void) {
 
 static void test_taps_and_flicks(void) {
     /* 3x3 grid on 900x900: a tap reports its cell on the tap rows. */
-    const uint32_t contact = stream(0)->contact_id;
+    const uint32_t contact = stream(0)->contact.contact_id;
     press();
-    assert(stream(0)->contact_id == contact + 1);
+    assert(stream(0)->contact.contact_id == contact + 1);
     expect_no_hold(0);
     frame(450, 150);
-    assert(stream(0)->start_x == 450 && stream(0)->hold_work.scheduled);
+    assert(stream(0)->contact.start_x == 450 && stream(0)->hold_work.scheduled);
     send(INPUT_EV_ABS, INPUT_ABS_X, 460, false);
     assert(stream(0)->hold_work.scheduled);
     send(INPUT_EV_ABS, INPUT_ABS_X, 450, false);
@@ -316,17 +293,17 @@ static void test_taps_and_flicks(void) {
     press();
     frame(450, 450);
     frame(450, 500);  /* below the threshold */
-    assert(!stream(0)->flick_latched);
+    assert(!stream(0)->contact.flick_latched);
     frame(550, 450);  /* right, exactly the threshold: latches */
-    assert(stream(0)->flick_latched && stream(0)->flick_max_travel == 10000U);
+    assert(stream(0)->contact.flick_latched && stream(0)->contact.flick_max_travel == 10000U);
     assert(!stream(0)->hold_work.scheduled);
     frame(600, 450);  /* farther right */
-    assert(stream(0)->flick_latched && !stream(0)->hold_work.scheduled);
+    assert(stream(0)->contact.flick_latched && !stream(0)->hold_work.scheduled);
     frame(560, 450);  /* shorter: ignored */
     frame(450, 250);  /* longer and upward: the direction follows */
     frame(450, 250);  /* no farther */
     frame(650, 450);  /* as far, but right: the first stays */
-    assert(stream(0)->flick_gesture == GESTURE_UP);
+    assert(stream(0)->contact.flick_gesture == GESTURE_UP);
     lift();
     expect_no_flick(0);
     expect(2, 1 * 3 + 1, 1, true); /* GESTURE_UP row block 1, middle cell */
@@ -343,36 +320,36 @@ static void test_taps_and_flicks(void) {
 static void test_frames_without_touch(void) {
     /* Coordinates with no touch are forgotten at the frame end. */
     frame(10, 10);
-    assert(stream(0)->current_x == COORD_UNINITIALIZED);
+    assert(stream(0)->contact.current_x == COORD_UNINITIALIZED);
     send(INPUT_EV_ABS, INPUT_ABS_Y, 20, true);
-    assert(stream(0)->current_y == COORD_UNINITIALIZED);
+    assert(stream(0)->contact.current_y == COORD_UNINITIALIZED);
     send(INPUT_EV_ABS, INPUT_ABS_X, 20, true);
-    assert(stream(0)->current_x == COORD_UNINITIALIZED);
+    assert(stream(0)->contact.current_x == COORD_UNINITIALIZED);
     send(INPUT_EV_ABS, INPUT_ABS_PRESSURE, 20, true);
 
     /* A touch whose first frame lacks an axis waits for both. */
     press();
     send(INPUT_EV_ABS, INPUT_ABS_PRESSURE, 5, true);
     send(INPUT_EV_ABS, INPUT_ABS_X, 100, true);
-    assert(stream(0)->start_x == COORD_UNINITIALIZED);
+    assert(stream(0)->contact.start_x == COORD_UNINITIALIZED);
     send(INPUT_EV_ABS, INPUT_ABS_Y, 100, true);
-    assert(stream(0)->start_x == 100);
+    assert(stream(0)->contact.start_x == 100);
     /* A second press edge while touching changes nothing. */
-    const uint32_t contact = stream(0)->contact_id;
+    const uint32_t contact = stream(0)->contact.contact_id;
     press();
-    assert(stream(0)->contact_id == contact);
+    assert(stream(0)->contact.contact_id == contact);
     lift();
     /* A release edge with no touch open changes nothing. */
     release_touch();
-    assert(!stream(0)->is_btn_touch);
+    assert(!stream(0)->contact.is_btn_touch);
     report_count = 0;
 }
 
 static void release_with_flick_state(void) {
     release_touch();
-    stream(0)->flick_latched = true;
-    stream(0)->flick_gesture = GESTURE_UP;
-    stream(0)->flick_max_travel = 5;
+    stream(0)->contact.flick_latched = true;
+    stream(0)->contact.flick_gesture = GESTURE_UP;
+    stream(0)->contact.flick_max_travel = 5;
 }
 
 static void test_long_press(void) {
@@ -380,10 +357,10 @@ static void test_long_press(void) {
     press();
     frame(100, 800);
     run_hold(0);
-    assert(report_count == 1 && stream(0)->is_holding && stream(0)->hold_reported);
+    assert(report_count == 1 && stream(0)->contact.is_holding && stream(0)->contact.hold_reported);
     expect(0, 2, 0, true);
     frame(700, 800); /* holding: no flick */
-    assert(!stream(0)->flick_latched);
+    assert(!stream(0)->contact.flick_latched);
     lift();
     expect(1, 2, 0, false);
     assert(report_count == 2);
@@ -409,7 +386,7 @@ static void test_long_press(void) {
     data.params.enabled = false; /* switched off, not yet resynced */
     run_hold(0);
     data.params.enabled = true;
-    assert(report_count == 6 && !stream(0)->is_holding);
+    assert(report_count == 6 && !stream(0)->contact.is_holding);
     lift();
     report_count = 0;
 
@@ -423,7 +400,7 @@ static void test_long_press(void) {
     expect_no_hold(0);
     expect_no_flick(0);
     expect_positions_forgotten(0);
-    assert(!stream(0)->is_holding && stream(0)->current_x == COORD_UNINITIALIZED);
+    assert(!stream(0)->contact.is_holding && stream(0)->contact.current_x == COORD_UNINITIALIZED);
 
     /* ...likewise when the lift's frame lands in the gap. */
     press();
@@ -440,16 +417,16 @@ static void test_long_press(void) {
     during_report = press;
     run_hold(0);
     /* press() while touching changes nothing, so end and restart the touch. */
-    assert(report_count == 5 && stream(0)->hold_reported);
+    assert(report_count == 5 && stream(0)->contact.hold_reported);
     lift();
     report_count = 0;
     press();
     frame(100, 100);
     during_report = NULL;
-    stream(0)->is_btn_touch = true;
-    const uint32_t first = stream(0)->contact_id;
+    stream(0)->contact.is_btn_touch = true;
+    const uint32_t first = stream(0)->contact.contact_id;
     run_hold(0);
-    assert(stream(0)->hold_contact_id == first);
+    assert(stream(0)->contact.hold_contact_id == first);
     lift();
     report_count = 0;
 }
@@ -460,7 +437,7 @@ static void new_contact_in_gap(void) {
 }
 
 /* A different hold took the stream's place while this one was pressed. */
-static void other_hold_in_gap(void) { stream(0)->hold_contact_id++; }
+static void other_hold_in_gap(void) { stream(0)->contact.hold_contact_id++; }
 
 static void resync_in_gap(void) {
     const struct zip_matrix_runtime_params p = params_of(true, 100, 300);
@@ -471,10 +448,10 @@ static void test_hold_cells(void) {
     /* 3x3 on 900x900: 800,800 is row 2, column 2 of the tap rows. */
     press();
     frame(800, 800);
-    stream(0)->hold_reported = true;
-    stream(0)->hold_release_pending = true;
+    stream(0)->contact.hold_reported = true;
+    stream(0)->contact.hold_release_pending = true;
     run_hold(0);
-    assert(report_count == 1 && stream(0)->hold_reported && !stream(0)->hold_release_pending);
+    assert(report_count == 1 && stream(0)->contact.hold_reported && !stream(0)->contact.hold_release_pending);
     expect(0, 2, 2, true);
     lift();
     expect(1, 2, 2, false);
@@ -492,10 +469,10 @@ static void test_hold_cells(void) {
     press();
     frame(100, 100);
     frame(400, 100);
-    assert(stream(0)->flick_latched);
+    assert(stream(0)->contact.flick_latched);
     release_touch();
     press();
-    assert(stream(0)->start_x == COORD_UNINITIALIZED && stream(0)->start_y == COORD_UNINITIALIZED);
+    assert(stream(0)->contact.start_x == COORD_UNINITIALIZED && stream(0)->contact.start_y == COORD_UNINITIALIZED);
     expect_no_flick(0);
     lift();
     report_count = 0;
@@ -509,7 +486,7 @@ static void test_hold_races(void) {
     during_report = new_contact_in_gap;
     run_hold(0);
     assert(report_count == 2 && !reports[1].pressed);
-    assert(stream(0)->is_btn_touch && !stream(0)->is_holding);
+    assert(stream(0)->contact.is_btn_touch && !stream(0)->contact.is_holding);
     lift();
     report_count = 0;
 
@@ -517,12 +494,12 @@ static void test_hold_races(void) {
      * hold as unreported, so the worker releases what it pressed. */
     press();
     frame(100, 100);
-    const uint32_t before_resync = stream(0)->contact_id;
+    const uint32_t before_resync = stream(0)->contact.contact_id;
     during_report = resync_in_gap;
     run_hold(0);
     assert(report_count == 2 && !reports[1].pressed);
     expect_no_hold(0);
-    assert(stream(0)->contact_id == before_resync + 1);
+    assert(stream(0)->contact.contact_id == before_resync + 1);
     report_count = 0;
 
     /* The stream holds for another contact by the time this press is out:
@@ -531,9 +508,9 @@ static void test_hold_races(void) {
     frame(100, 100);
     during_report = other_hold_in_gap;
     run_hold(0);
-    assert(report_count == 2 && !reports[1].pressed && stream(0)->is_holding);
-    assert(!stream(0)->hold_reported);
-    stream(0)->is_holding = false;
+    assert(report_count == 2 && !reports[1].pressed && stream(0)->contact.is_holding);
+    assert(!stream(0)->contact.hold_reported);
+    stream(0)->contact.is_holding = false;
     lift();
     report_count = 0;
 
@@ -556,10 +533,10 @@ static void test_hold_races(void) {
     assert(!stream(0)->hold_work.scheduled);
     lift();
     report_count = 0;
-    stream(0)->is_holding = true;
-    stream(0)->hold_reported = false;
+    stream(0)->contact.is_holding = true;
+    stream(0)->contact.hold_reported = false;
     press();
-    assert(stream(0)->hold_release_pending);
+    assert(stream(0)->contact.hold_release_pending);
     lift();
     report_count = 0;
 
@@ -567,67 +544,48 @@ static void test_hold_races(void) {
      * worker. */
     press();
     frame(100, 100);
-    stream(0)->is_holding = true;
-    stream(0)->hold_reported = false;
-    stream(0)->hold_release_pending = false;
-    stream(0)->hold_contact_id = stream(0)->contact_id;
+    stream(0)->contact.is_holding = true;
+    stream(0)->contact.hold_reported = false;
+    stream(0)->contact.hold_release_pending = false;
+    stream(0)->contact.hold_contact_id = stream(0)->contact.contact_id;
     lift();
-    assert(stream(0)->is_holding && stream(0)->hold_release_pending && report_count == 0);
+    assert(stream(0)->contact.is_holding && stream(0)->contact.hold_release_pending && report_count == 0);
 
     /* A lift over an older contact's unfinished hold reports the new tap and
      * leaves the old hold to its worker. */
     press();
     frame(100, 100);
-    stream(0)->is_holding = true;
-    stream(0)->hold_contact_id = stream(0)->contact_id - 1;
+    stream(0)->contact.is_holding = true;
+    stream(0)->contact.hold_contact_id = stream(0)->contact.contact_id - 1;
     frame(400, 100); /* moving, the stale hold does not stop a flick */
-    assert(stream(0)->flick_latched);
+    assert(stream(0)->contact.flick_latched);
     lift();
-    assert(stream(0)->is_holding && report_count == 2);
+    assert(stream(0)->contact.is_holding && report_count == 2);
     report_count = 0;
     resync_in_gap();
 }
 
 static void test_suppression(void) {
-    /* suppress_key drops button pairs it saw pressed, passes other releases. */
     struct zip_matrix_runtime_params p = params_of(true, 100, 0);
     p.suppress_abs = false;
-    p.suppress_btn_touch = false;
-    p.suppress_key = true;
     assert(zip_matrix_set_params(&matrix, &p) == 0);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 0, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 0, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0 + 16, 1, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0 + 16, 0, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0 + 15, 0, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_KEY, INPUT_KEY_A, 1, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_ABS, INPUT_ABS_X, 5, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, false) == ZMK_INPUT_PROC_STOP);
-
-    /* suppress_btn_touch alone drops only the touch. */
-    p.suppress_key = false;
-    p.suppress_btn_touch = true;
-    assert(zip_matrix_set_params(&matrix, &p) == 0);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, false) == ZMK_INPUT_PROC_STOP);
-
-    /* Neither: everything passes; other event types always pass. */
-    p.suppress_btn_touch = false;
-    assert(zip_matrix_set_params(&matrix, &p) == 0);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(send(INPUT_EV_REL, 0, 3, false) == ZMK_INPUT_PROC_CONTINUE);
-
-    /* Disabled: nothing is read or dropped. */
-    p.enabled = false;
-    assert(zip_matrix_set_params(&matrix, &p) == 0);
-    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_CONTINUE);
-    assert(stream(0)->current_x == COORD_UNINITIALIZED);
-    report_count = 0;
-    resync_in_gap();
+    const uint16_t keys[] = {INPUT_BTN_TOUCH, INPUT_BTN_0, INPUT_BTN_0+15,
+                            INPUT_BTN_0+16, INPUT_KEY_A};
+    for (size_t i=0; i<ARRAY_SIZE(keys); i++) {
+        assert(send(INPUT_EV_KEY,keys[i],1,false)==ZMK_INPUT_PROC_STOP);
+        assert(send(INPUT_EV_KEY,keys[i],0,false)==ZMK_INPUT_PROC_STOP);
+        /* Negative up also ends a suppressed press; open a new pair first.
+         * An additional unpaired tracked-button up is tested separately. */
+        assert(send(INPUT_EV_KEY,keys[i],1,false)==ZMK_INPUT_PROC_STOP);
+        assert(send(INPUT_EV_KEY,keys[i],-1,false)==ZMK_INPUT_PROC_STOP);
+    }
+    assert(send(INPUT_EV_ABS,INPUT_ABS_X,5,false)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_REL,0,3,false)==ZMK_INPUT_PROC_CONTINUE);
+    p.enabled=false; assert(zip_matrix_set_params(&matrix,&p)==0);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_TOUCH,1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_TOUCH,0,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(stream(0)->contact.current_x==COORD_UNINITIALIZED);
+    report_count=0; resync_in_gap();
 }
 
 static void test_streams_and_generations(void) {
@@ -637,30 +595,31 @@ static void test_streams_and_generations(void) {
 
     /* A second listener keeps its own contact. */
     send_to(&second, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
-    assert(stream(1)->is_btn_touch && !stream(0)->is_btn_touch);
+    assert(stream(1)->contact.is_btn_touch && !stream(0)->contact.is_btn_touch);
     send_to(&second, INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, false);
 
     /* A stream that missed a reset catches up before its next event. */
     press();
     frame(100, 100);
     frame(400, 100);
-    assert(stream(0)->flick_latched);
-    stream(0)->suppressed_btns = 3;
-    stream(0)->hold_release_pending = true;
+    assert(stream(0)->contact.flick_latched);
+    stream(0)->buttons.suppressed = 3;
+    stream(0)->contact.hold_release_pending = true;
     data.reset_generation++;
     send(INPUT_EV_ABS, INPUT_ABS_X, 100, false);
-    assert(!stream(0)->is_btn_touch && stream(0)->start_x == COORD_UNINITIALIZED);
+    assert(!stream(0)->contact.is_btn_touch && stream(0)->contact.start_x == COORD_UNINITIALIZED);
     expect_no_flick(0);
     expect_no_hold(0);
-    assert(stream(0)->suppressed_btns == 0 && stream(0)->start_y == COORD_UNINITIALIZED);
-    assert(stream(0)->current_y == COORD_UNINITIALIZED);
+    assert(stream(0)->buttons.suppressed == 3 && stream(0)->contact.start_y == COORD_UNINITIALIZED);
+    stream(0)->buttons.suppressed = 0; /* The forced synthetic ownership ends here. */
+    assert(stream(0)->contact.current_y == COORD_UNINITIALIZED);
 
     /* A reset landing mid-event throws the event away. */
     press();
     frame(100, 100);
     writer_lands_on_read = 3;
     assert(send(INPUT_EV_ABS, INPUT_ABS_X, 100, true) == ZMK_INPUT_PROC_STOP);
-    assert(!stream(0)->is_btn_touch);
+    assert(!stream(0)->contact.is_btn_touch);
 
     /* Likewise an event that would have passed untouched. */
     writer_lands_on_read = 3;
@@ -670,7 +629,7 @@ static void test_streams_and_generations(void) {
     press();
     frame(100, 100);
     run_hold(0);
-    assert(stream(0)->hold_reported);
+    assert(stream(0)->contact.hold_reported);
     zip_matrix_release_hold_on_layer_change(&matrix);
     assert(report_count == 2 && !reports[1].pressed);
     expect_no_hold(0);
@@ -687,6 +646,57 @@ static void test_streams_and_generations(void) {
     report_count = 0;
 }
 
+static void test_releases_during_generation_change(void) {
+    struct zip_matrix_runtime_params p = params_of(true, 100, 300);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    report_count = 0;
+
+    /* Once a hold press escaped, a reset cannot discard its claimed release.
+     * Exercise both the lift frame and the stale hold at a new contact. */
+    for (int new_contact = 0; new_contact < 2; new_contact++) {
+        press();
+        frame(450, 150);
+        run_hold(0);
+        expect(0, 0, 1, true);
+        release_touch();
+        writer_lands_on_read = 3;
+        if (new_contact) {
+            assert(send(INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false) == ZMK_INPUT_PROC_STOP);
+        } else {
+            assert(send(INPUT_EV_ABS, INPUT_ABS_PRESSURE, 0, true) == ZMK_INPUT_PROC_STOP);
+        }
+        expect(1, 0, 1, false);
+        assert(report_count == 2);
+        expect_no_hold(0);
+        expect_positions_forgotten(0);
+        lift(); /* no duplicate release or tap after the reset */
+        assert(report_count == 2);
+        report_count = 0;
+    }
+
+    /* A forwarded button press also owns its release, on either listener. */
+    struct zmk_input_processor_state *states[] = {NULL, &second};
+    /* A new press that has not escaped remains disposable across a reset. */
+    writer_lands_on_read = 3;
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_STOP);
+    for (size_t i = 0; i < ARRAY_SIZE(states); i++) {
+        p.enabled=false; assert(zip_matrix_set_params(&matrix,&p)==0);
+        assert(send_to(states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
+               ZMK_INPUT_PROC_CONTINUE);
+        p.enabled=true; assert(zip_matrix_set_params(&matrix,&p)==0);
+        writer_lands_on_read = 3;
+        assert(send_to(states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+               ZMK_INPUT_PROC_CONTINUE);
+    }
+
+    /* A release paired with this processor's suppressed press stays consumed. */
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_STOP);
+    writer_lands_on_read = 3;
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_STOP);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+}
+
 static void test_diamond(void) {
     /* A 1x4 diamond reports taps only, chosen by where the finger rests. */
     config.rows = 1;
@@ -695,7 +705,7 @@ static void test_diamond(void) {
     press();
     frame(450, 100);
     frame(800, 100); /* travel alone never flicks */
-    assert(!stream(0)->flick_latched);
+    assert(!stream(0)->contact.flick_latched);
     lift();
     expect(0, 0, 0, true); /* up */
     press();
@@ -717,9 +727,9 @@ static void test_runtime_params(void) {
     frame(450, 450);
     assert(stream(0)->hold_work.scheduled && stream(0)->hold_work.delay_ms == 1);
     frame(650, 450); /* 200: a flick at 100, not at 300 */
-    assert(!stream(0)->flick_latched);
+    assert(!stream(0)->contact.flick_latched);
     frame(800, 450);
-    assert(stream(0)->flick_latched);
+    assert(stream(0)->contact.flick_latched);
     lift();
     report_count = 0;
     p = params_of(true, 100, 300);
@@ -736,10 +746,119 @@ static void test_no_long_press(void) {
     report_count = 0;
 }
 
+static void test_external_button_release(void) {
+    struct zip_matrix_runtime_params p=params_of(true,100,300);
+    assert(zip_matrix_set_params(&matrix,&p)==0);
+    struct zmk_input_processor_state second={.input_device_index=1};
+    for(uint16_t code=INPUT_BTN_0;code<INPUT_BTN_0+16;code++) {
+        /* An ordinary route may have sent the down without invoking Matrix. */
+        assert(send(INPUT_EV_KEY,code,0,true)==ZMK_INPUT_PROC_CONTINUE);
+        assert(send(INPUT_EV_KEY,code,-1,true)==ZMK_INPUT_PROC_CONTINUE);
+        assert(send(INPUT_EV_KEY,code,1,true)==ZMK_INPUT_PROC_STOP);
+        assert(send_to(&second,INPUT_EV_KEY,code,0,true)==ZMK_INPUT_PROC_CONTINUE);
+        assert(send(INPUT_EV_KEY,code,0,true)==ZMK_INPUT_PROC_STOP);
+    }
+    /* Touch is internal contact state, including an otherwise unpaired up. */
+    assert(send(INPUT_EV_KEY,INPUT_BTN_TOUCH,0,true)==ZMK_INPUT_PROC_STOP);
+}
+
+static void test_button_ownership(void) {
+    struct zip_matrix_runtime_params p=params_of(false,100,300);
+    assert(zip_matrix_set_params(&matrix,&p)==0);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,2,true)==ZMK_INPUT_PROC_CONTINUE);
+    p.enabled=true; assert(zip_matrix_set_params(&matrix,&p)==0);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,-1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_STOP);
+    p.enabled=false; assert(zip_matrix_set_params(&matrix,&p)==0);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,0,true)==ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,-1,true)==ZMK_INPUT_PROC_CONTINUE);
+    zip_matrix_release_hold_on_layer_change(&matrix);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,0,true)==ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,-1,true)==ZMK_INPUT_PROC_CONTINUE);
+    p.enabled=true; assert(zip_matrix_set_params(&matrix,&p)==0);
+    writer_lands_on_read=4;
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,1,true)==ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_KEY,INPUT_BTN_0,0,true)==ZMK_INPUT_PROC_STOP);
+}
+
+static void test_rejected_output(void) {
+    struct zip_matrix_runtime_params p = params_of(true, 100, 300);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    report_count = 0;
+    reject_acquire = true;
+    press(); frame(100, 100); run_hold(0);
+    expect_no_hold(0);
+    assert(report_count == 0);
+    lift();
+    press(); frame(100, 100); lift();
+    assert(report_count == 0);
+    reject_acquire = false;
+    press(); frame(100, 100); run_hold(0); lift();
+    assert(report_count == 2); expect(0, 0, 0, true); expect(1, 0, 0, false);
+    report_count = 0;
+}
+
+static int disabled_event(uint16_t type, uint16_t code, int32_t value, bool sync) {
+    struct zip_matrix_runtime_params p=data.params;
+    p.enabled=false;
+    assert(zip_matrix_set_params(&matrix,&p)==0);
+    return send(type, code, value, sync);
+}
+
+static void disable_on_release(void) {
+    const struct zip_matrix_runtime_params p = params_of(false, 100, 300);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+}
+
+static void test_release_callback_reset(void) {
+    struct zip_matrix_effects effects = {.release_hold=true,
+                                         .schedule_hold=true};
+    atomic_val_t generation = atomic_get(&data.reset_generation);
+    during_report = disable_on_release;
+    /* An escaped hold is always released. Its callback can invalidate the
+     * remaining effects, which must neither reschedule nor emit a new tap. */
+    assert(!zip_matrix_apply_effects(&data, stream(0), &config, &effects, generation));
+    assert(!stream(0)->hold_work.scheduled && !data.params.enabled);
+}
+
+static void test_activation_and_frames(void) {
+    struct zip_matrix_runtime_params p = params_of(true, 100, 300);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_STOP);
+    assert(disabled_event(INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_STOP);
+    assert(!stream(0)->buttons.suppressed && !stream(0)->buttons.forwarded);
+    assert(disabled_event(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(zip_matrix_set_params(&matrix,&p)==0);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(!stream(0)->buttons.suppressed && !stream(0)->buttons.forwarded);
+
+    /* A pending report belongs to the downstream frame, across resets/routes. */
+    assert(disabled_event(INPUT_EV_REL, 0, 7, false) == ZMK_INPUT_PROC_CONTINUE);
+    assert(stream(0)->buttons.frame_pending);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    zip_matrix_release_hold_on_layer_change(&matrix);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(!stream(0)->buttons.frame_pending);
+    assert(send(INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_REL, 0, 3, false) == ZMK_INPUT_PROC_CONTINUE);
+    assert(send(INPUT_EV_ABS, INPUT_ABS_X, 100, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(!stream(0)->buttons.frame_pending);
+    /* Entirely consumed frames do not create empty pointing reports. */
+    assert(send(INPUT_EV_ABS, INPUT_ABS_X, 100, false) == ZMK_INPUT_PROC_STOP);
+    assert(send(INPUT_EV_ABS, INPUT_ABS_Y, 100, true) == ZMK_INPUT_PROC_STOP);
+}
+
 int main(void) {
     config = (struct zip_matrix_config){.rows = 3, .columns = 3, .x = 900, .y = 900,
                                         .flick_threshold = 100, .long_press_ms = 300,
-                                        .suppress_abs = true, .suppress_btn_touch = true,
+                                        .suppress_abs = true,
                                         .kscan_dev = &kscan};
     matrix = (struct device){.config = &config, .data = &data, .name = "matrix"};
 
@@ -752,9 +871,15 @@ int main(void) {
     test_hold_races();
     test_suppression();
     test_streams_and_generations();
+    test_releases_during_generation_change();
     test_diamond();
     test_runtime_params();
     test_no_long_press();
+    test_rejected_output();
+    test_external_button_release();
+    test_button_ownership();
+    test_activation_and_frames();
+    test_release_callback_reset();
 
     for (size_t i = 0; i < ZIP_MATRIX_STREAM_COUNT; i++) {
         assert(!stream(i)->lock.held);

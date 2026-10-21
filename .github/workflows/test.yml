@@ -20,14 +20,20 @@ concurrency:
   group: test-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  ZMK_TEST_IMAGE: zmkfirmware/zmk-build-arm@sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5
+  ZMK_TEST_MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || 'quick' }}
+
 jobs:
   runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - name: Exercise the driver, kscan proxy and settings helpers with full coverage
-        run: python3 tests/runtime/run.py
+      - name: Exercise all driver, proxy and settings scenarios
+        run: |
+          python3 tests/runtime/run.py
+          python3 -m unittest discover -s tests/integration -p 'test_*.py' -v
 
   firmware:
     runs-on: ubuntu-latest
@@ -38,5 +44,37 @@ jobs:
         variant: [upstream, dya]
     steps:
       - uses: actions/checkout@v5
-      - name: Build the ${{ matrix.variant }} ZMK firmware fixture
-        run: bash ./tests/run-integration-docker.sh ${{ matrix.variant }}
+      - name: Check out the pinned IQS click producer
+        uses: actions/checkout@v5
+        with:
+          repository: amgskobo/zmk-iqs7211e-driver
+          ref: fcb5d94028b1094204f286069dd640ae0dfdb5ce
+          path: .test-dependencies/iqs
+          persist-credentials: false
+      - name: Build firmware and exercise Matrix with the actual IQS producer
+        env:
+          ZMK_TEST_IQS_ROOT: ${{ github.workspace }}/.test-dependencies/iqs
+          ZMK_TEST_REQUIRE_IQS: '1'
+          ZMK_TEST_OUTPUT: ${{ runner.temp }}/matrix-results/${{ matrix.variant }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/matrix-results"
+          set -o pipefail
+          bash ./tests/run-integration-docker.sh ${{ matrix.variant }} 2>&1 | tee "$RUNNER_TEMP/matrix-results/${{ matrix.variant }}.log"
+      - name: Preserve ordered results and source identities
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: matrix-${{ matrix.variant }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}.log
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/kernel/CMakeCache.txt
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/kernel/zephyr/.config
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/kernel/zephyr/zephyr.dts
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/kernel/zephyr/zmk.exe
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/kernel*.log
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/ownership
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/build/zephyr/.config
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/build/zephyr/zephyr.dts
+            ${{ runner.temp }}/matrix-results/${{ matrix.variant }}/build/zephyr/zmk.uf2
