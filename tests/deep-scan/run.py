@@ -101,7 +101,7 @@ def iqs_identity():
         for f in sorted(p.rglob('*')) if p.is_dir() else [p]:
             if f.is_file(): files[f.relative_to(iqs_root).as_posix()]=hashlib.sha256(f.read_bytes()).hexdigest()
     return dict(path=str(iqs_root),revision=subprocess.check_output(
-        ['git','-C',str(iqs_root),'rev-parse','HEAD'],text=True).strip(),files=files)
+        ['git','-c','safe.directory='+str(iqs_root),'-C',str(iqs_root),'rev-parse','HEAD'],text=True).strip(),files=files)
 iqs_before=None
 if iqs_root:
     if not (iqs_root/'src/iqs7211e.c').is_file(): parser.error('IQS producer source missing')
