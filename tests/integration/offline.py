@@ -46,6 +46,22 @@ def export_core(source, target):
     subprocess.run(["git", "-C", str(target), "update-ref", "refs/heads/manifest-rev", expected], check=True)
     identity(target, expected)
 
+def validate_layout(source, projects, output):
+    paths = []
+    for relative, _ in projects.values():
+        if relative == Path('.') or any(relative == reserved or reserved in relative.parents
+                                        for reserved in (Path('config'), Path('.west'))):
+            raise ValueError(f"unsafe project path: {relative}")
+        for other in paths:
+            if relative == other or relative in other.parents or other in relative.parents:
+                raise ValueError(f"overlapping project paths: {other}, {relative}")
+        paths.append(relative)
+    destination = output.resolve()
+    sources = [source, *(path.resolve() for _, path in projects.values())]
+    if any(destination == path or path in destination.parents for path in sources):
+        raise ValueError(f"output must be outside resolved sources: {output}")
+
+
 def prepare(source, variant, manifest, output):
     source, manifest, output = Path(source).resolve(), Path(manifest).resolve(), Path(output).absolute()
     if variant not in CORES:
@@ -63,6 +79,7 @@ def prepare(source, variant, manifest, output):
             if relative.is_absolute() or ".." in relative.parts:
                 raise ValueError(f"unsafe project path: {relative}")
             projects[name] = (relative, Path(absolute))
+    validate_layout(source, projects, output)
     pins = dict(PINS, zmk=CORES[variant], **{"zmk-studio-messages": STUDIO[variant]})
     identities = {}
     for name, pin in pins.items():

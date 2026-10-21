@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: amgskobo/zmk-iqs7211e-driver
-          ref: fcb5d94028b1094204f286069dd640ae0dfdb5ce
+          ref: 6114ec0b6ac859380125afd60a9c042a0cfa2406
           path: .test-dependencies/iqs
           persist-credentials: false
       - name: Build firmware and exercise Matrix with the actual IQS producer

@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 import shutil
 import os
+import io
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -102,11 +104,61 @@ class OfflineAdmission(unittest.TestCase):
     def test_existing_custom_settings_archive_with_wrong_digest_is_rejected(self):
         self.manifest.write_text("zmk-feature-custom-settings\n")
         archive = self.root / "wrong-archive.tar"
-        archive.write_bytes(b"controlled invalid archive bytes")
+        payload = b"controlled wrong dependency content\n"
+        with tarfile.open(archive, "w") as bundle:
+            member = tarfile.TarInfo("README.md")
+            member.size = len(payload)
+            bundle.addfile(member, io.BytesIO(payload))
         with patch.dict(offline.os.environ, {"ZMK_TEST_CUSTOM_SETTINGS_ARCHIVE": str(archive)}):
             with self.assertRaisesRegex(ValueError, "pinned custom-settings"):
                 self.prepare()
         self.assertFalse(self.output.exists())
+
+    def test_external_dependency_and_sibling_output_remain_supported(self):
+        dependency = self.root / 'external/zephyr'
+        dependency.mkdir(parents=True)
+        marker = dependency / 'original.txt'
+        marker.write_text('original dependency bytes')
+        self.rows = self.rows.replace(str(self.source / 'zephyr'), str(dependency))
+        self.output = self.root / 'source-results'
+        workspace = self.prepare()
+        self.assertEqual((workspace / 'zephyr').resolve(), dependency)
+        self.assertEqual(list(dependency.iterdir()), [marker])
+        self.assertEqual(marker.read_text(), 'original dependency bytes')
+
+    def test_outputs_inside_sources_and_aliases_are_rejected(self):
+        alias = self.root / 'alias'
+        alias.symlink_to(self.source / 'zephyr', target_is_directory=True)
+        for target in (self.source / 'results', self.source / 'zephyr/results', alias / 'results'):
+            with self.subTest(output=str(target)):
+                self.output = target
+                with self.assertRaisesRegex(ValueError, 'output.*source'):
+                    self.prepare()
+                self.assertFalse(target.exists())
+
+    def test_output_inside_external_dependency_is_rejected(self):
+        dependency = self.root / 'external/zephyr'
+        dependency.mkdir(parents=True)
+        self.rows = self.rows.replace(str(self.source / 'zephyr'), str(dependency))
+        self.output = dependency / 'results'
+        with self.assertRaisesRegex(ValueError, 'output.*source'):
+            self.prepare()
+        self.assertEqual(list(dependency.iterdir()), [])
+
+    def test_project_paths_cannot_alias_nest_or_overlap_metadata(self):
+        original = self.rows
+        for index, relative in enumerate(('.', 'config', 'config/nested', '.west', '.west/nested', 'cache', 'cache/nested')):
+            with self.subTest(path=relative):
+                self.output = self.root / f'overlap-output-{index}'
+                outer, inner = self.root / f'outer-{index}', self.root / f'inner-{index}'
+                outer.mkdir()
+                inner.mkdir()
+                self.rows = original + f'\nouter|cache|{outer}\ninner|{relative}|{inner}'
+                with self.assertRaisesRegex(ValueError, 'unsafe project path|overlapping project paths'):
+                    self.prepare()
+                self.assertFalse(self.output.exists())
+                self.assertEqual(list(outer.iterdir()), [])
+                self.rows = original
 
 if __name__ == "__main__":
     unittest.main()

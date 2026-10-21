@@ -43,8 +43,12 @@
   "infrastructure": {
     "fixtures": [
       {
+        "fixture": "tests/test_runtime_coverage.py",
+        "asserts": "Actual full runtime entry rejects empty, unrelated and partially measured coverage; normal full runs retain measured lines/branches for every real function"
+      },
+      {
         "fixture": "tests/integration/test_offline.py",
-        "asserts": "Exact supported core/dependency pins, clean sources, missing inputs, safe project paths, fresh outputs and pinned custom-settings archive; identity bypass negative control"
+        "asserts": "Exact supported core/dependency pins, clean sources, missing inputs, nonoverlapping project paths separate from west/config metadata, fresh outputs outside source/dependency trees including aliases, parseable wrong-archive rejection; identity/digest bypass controls"
       },
       {
         "fixture": "tests/integration/test_output_guard.py",

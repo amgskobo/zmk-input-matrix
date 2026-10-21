@@ -153,6 +153,7 @@ def body_end(source, opening):
 def misses(gcov_text, ranges):
     """Count lines and branches inside ranges; list what never ran."""
     lines = executed = branches = taken = 0
+    observed = [0 for _range in ranges]
     missed = []
     current = None
     for row in gcov_text.splitlines():
@@ -174,10 +175,17 @@ def misses(gcov_text, ranges):
         if not inside or count == "-":
             continue
         lines += 1
+        for index, (first, last) in enumerate(ranges):
+            if first <= number <= last:
+                observed[index] += 1
         if count.startswith(("#####", "=====")):
             missed.append(f"  {number}: {text.strip()}  (never ran)")
         else:
             executed += 1
+    if not ranges or not lines:
+        raise RuntimeError("coverage report has no executable lines in gated functions")
+    if any(count == 0 for count in observed):
+        raise RuntimeError("coverage report has no executable lines for a gated function range")
     return lines, executed, branches, taken, missed
 
 
@@ -209,9 +217,10 @@ def render_fixture(fixture, file_name, gated, support, source_path=None):
     ranges = []
     for name in (*support, *gated):
         first, last, text = definition(source, name)
-        if name in gated:
+        # Macro expansions are measured in their calling functions.
+        if name in gated and not name.startswith("#"):
             ranges.append((first, last))
-        elif not name.startswith("#"):
+        elif name not in gated and not name.startswith("#"):
             # A harness need not call every function it only compiles.
             text = "__attribute__((unused)) " + text
         functions.append(f'#line {first} "{source_path}"\n{text}')

@@ -25,6 +25,7 @@ Unknown mode values fail; there is no silent skipped success.
 | [runtime/driver_harness.c](runtime/driver_harness.c) | Gesture identity, contact generations, hold/cancel and balanced releases, activation-boundary click/frame state and release-callback reset |
 | [runtime/kscan_harness.c](runtime/kscan_harness.c) | Virtual KSCAN output contract |
 | [runtime/custom_settings_harness.c](runtime/custom_settings_harness.c) | Settings validation and reset |
+| [test_runtime_coverage.py](test_runtime_coverage.py) | Actual full runtime entry rejects empty, unrelated and partially measured reports |
 
 Each fixture keeps its existing normal, boundary/invalid, independent-state,
 reset/cancellation and failure/recovery scenarios where applicable. Checks
@@ -38,6 +39,15 @@ release of a suppressed press stays consumed. Fresh presses and motion remain
 discarded across a reset. The release-callback fixture changes settings during
 output dispatch and verifies that remaining old-generation effects are rejected. These are injected state transitions, separate from
 the actual-workqueue and physical-delivery checks below.
+
+The canonical host/CI entry requires executable gcov lines for every gated
+real function; macros are measured in their callers. Recording tools exercise
+the actual full entry, while normal full runs retain measured compiled coverage
+and all behavioral assertions. Offline staging rejects outputs inside resolved
+sources/dependencies and parent-symlink aliases, overlapping project paths and
+west/config metadata collisions before writing. External dependencies and
+sibling outputs remain supported. The parseable wrong-archive control must fail
+its missing-digest-rejection assertion when that check is bypassed.
 
 ## Separate integration and physical contracts
 
@@ -95,8 +105,8 @@ raw timestamps and the first failure. Read actual dependencies before execution.
 
 ## CI producer and retained evidence
 
-Both firmware CI jobs check out IQS commit
-`fcb5d94028b1094204f286069dd640ae0dfdb5ce` separately from the production
+Both firmware CI jobs check out the merged IQS commit
+`6114ec0b6ac859380125afd60a9c042a0cfa2406` separately from the production
 manifest and use a digest-pinned build image. They set `ZMK_TEST_IQS_ROOT` and
 `ZMK_TEST_REQUIRE_IQS=1` and invoke the standard Docker entry. The checkout is mounted read-only at `/iqs`.
 Missing IQS input fails before dependency preparation or builds; it cannot
@@ -133,9 +143,7 @@ The offline path makes an isolated west workspace using the original fixture
 manifest, an unchanged local Git clone of ZMK and symlinks to cached dependencies; it never fetches or patches
 the core. Exact supported core, Zephyr and required library revisions and clean
 source state are checked before a build; existing outputs are rejected.
-The combined processors/vector runners also require
-`ZMK_TEST_OFFLINE_UPSTREAM_WORKSPACE`. Other runners select `upstream` or `dya`
-as their first argument (the inertia default remains upstream).
+Select `upstream` or `dya` as the first argument.
 
 DYA fixtures that enable custom settings require
 `ZMK_TEST_CUSTOM_SETTINGS_ARCHIVE`: the SHA256-checked git archive of the pinned

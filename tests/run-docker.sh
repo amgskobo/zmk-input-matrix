@@ -8,4 +8,4 @@ repo_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 image="${ZMK_TEST_IMAGE:-zmkfirmware/zmk-build-arm:stable}"
 
 docker run --rm --env ZMK_TEST_MODE="${ZMK_TEST_MODE:-quick}" --volume "$repo_root:/src:ro" "$image" \
-    /bin/bash -lc 'cd /src && python3 tests/runtime/run.py && python3 -m unittest discover -s tests/integration -p "test_*.py" -v'
+    /bin/bash -lc 'cd /src && bash tests/run.sh'
