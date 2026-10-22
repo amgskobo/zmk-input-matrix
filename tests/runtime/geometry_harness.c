@@ -11,18 +11,7 @@
 #define ARG_UNUSED(x) (void)(x)
 #define ZIP_MATRIX_USE_DIAMOND_TAP 1
 
-enum gesture_type {
-    GESTURE_TAP, GESTURE_UP, GESTURE_DOWN, GESTURE_LEFT, GESTURE_RIGHT
-};
-
-struct zip_matrix_config {
-    uint8_t rows;
-    uint8_t columns;
-    uint16_t x;
-    uint16_t y;
-    uint16_t flick_threshold;
-    bool diamond_tap;
-};
+/* DRIVER_TYPES */
 
 /* DRIVER_FUNCTIONS */
 

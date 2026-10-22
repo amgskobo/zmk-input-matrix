@@ -19,6 +19,9 @@ class DockerHandoff(unittest.TestCase):
         self.producer = self.base / 'producer with spaces'
         (self.producer / 'src').mkdir(parents=True)
         (self.producer / 'src/iqs7211e.c').write_text('/* selected input */\n')
+        self.companion = self.base / 'filter companion'
+        (self.companion / 'src').mkdir(parents=True)
+        (self.companion / 'src/input_processor_suppress.c').write_text('/* selected companion */\n')
         self.bin = self.base / 'bin'
         self.bin.mkdir()
         self.calls = self.base / 'docker-args.json'
@@ -35,7 +38,8 @@ sys.exit(int(os.environ.get('DOCKER_EXIT', '0')))
         self.west_calls = self.base / 'west-calls'
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         DOCKER_CALLS=str(self.calls), WEST_CALLS=str(self.west_calls),
-                        TMPDIR=str(self.base), PYTHONDONTWRITEBYTECODE='1')
+                        TMPDIR=str(self.base), PYTHONDONTWRITEBYTECODE='1',
+                        ZMK_TEST_SUPPRESS_ROOT=str(self.companion))
         for key in ('ZMK_TEST_IQS_ROOT', 'ZMK_TEST_REQUIRE_IQS', 'ZMK_TEST_OUTPUT',
                     'ZMK_TEST_OFFLINE_WORKSPACE', 'DOCKER_EXIT'):
             self.env.pop(key, None)
@@ -52,6 +56,8 @@ sys.exit(int(os.environ.get('DOCKER_EXIT', '0')))
         self.assertEqual(result.returncode, 0, result.stderr)
         args = json.loads(self.calls.read_text())
         self.assertIn(f'{self.producer}:/iqs:ro', args)
+        self.assertIn(f'{self.companion}:/suppress:ro', args)
+        self.assertIn('ZMK_TEST_SUPPRESS_ROOT=/suppress', args)
         self.assertIn('ZMK_TEST_IQS_ROOT=/iqs', args)
         self.assertIn('ZMK_TEST_REQUIRE_IQS=1', args)
         self.assertIn(f'{output.parent}:/results', args)
@@ -117,6 +123,14 @@ sys.exit(int(os.environ.get('DOCKER_EXIT', '0')))
         self.assertTrue(self.west_calls.is_file())
         self.assertEqual((output / 'config/west.yml').read_bytes(),
                          (ROOT / 'tests/integration/config/upstream/west.yml').read_bytes())
+
+    def test_missing_companion_fails_before_docker_or_west(self):
+        for entry in ('tests/run-integration-docker.sh', 'tests/integration/run.sh'):
+            result = self.run_entry(entry, ZMK_TEST_SUPPRESS_ROOT=str(self.base / 'absent'))
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('explicit suppression companion required', result.stderr)
+            self.assertFalse(self.calls.exists())
+            self.assertFalse(self.west_calls.exists())
 
     def test_docker_failure_is_propagated(self):
         result = self.run_entry(ZMK_TEST_IQS_ROOT=str(self.producer),

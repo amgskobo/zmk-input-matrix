@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 
 parser=argparse.ArgumentParser(description=__doc__)
@@ -17,8 +16,7 @@ parser.add_argument('workspace',type=Path)
 parser.add_argument('output',type=Path)
 parser.add_argument('--iqs-root',type=Path,help='Explicit IQS owner checkout; add actual click-producer cases')
 parser.add_argument('--iqs-only',action='store_true',help='Focused producer boundary run (requires --iqs-root)')
-parser.add_argument('--regressions-only',action='store_true')
-parser.add_argument('--strict-clicks',action='store_true',help='Additional click-duration/source-ownership and ON/ON/OFF robustness checks; known FAIL')
+parser.add_argument('--strict-clicks',action='store_true',help='Additional click-duration/source-ownership and ON/ON/OFF robustness checks; all require PASS')
 parser.add_argument('--negative-control',choices=['inactive-matrix','iqs-inline-first','iqs-drop-release'],
                     help='Explicit negative control; require named failures')
 parser.add_argument('--core-revision',help='Explicit manifest-resolved core SHA from the integration entry')
@@ -37,8 +35,10 @@ workspace=args.workspace.resolve()
 out=args.output
 if not out.is_absolute(): parser.error('output must be absolute')
 if out.exists() or out.is_symlink(): parser.error('output already exists: '+str(out))
+companion=Path(os.environ.get('ZMK_TEST_SUPPRESS_ROOT','')).resolve()
+if not (companion/'src/input_processor_suppress.c').is_file(): parser.error('explicit suppression companion required')
 out.mkdir(parents=True,exist_ok=False)
-positive=('matrix-key-isolation','tap-no-hold','disable-held','reentrant-disable',
+positive=('independent-filter-policy','matrix-key-isolation','tap-no-hold','disable-held','reentrant-disable',
           'reentrant-retouch','forwarded-release','independent-button-release',
           'invalid-stream','long-walk','different-cells-real-hid','forwarded-release-real-input','separate-instances-control',
           'same-cell-real-hid','tap-over-hold-real-hid',
@@ -47,12 +47,7 @@ positive=('matrix-key-isolation','tap-no-hold','disable-held','reentrant-disable
           'repeat-one','repeat-two','repeat-real-input','touch-toggle','touch-real-input',
           'repeat-passthrough-real-input','disabled-button-real-input','suppressed-pair-policy-edit',
           'repeat-frame-real-input','independent-mouse-owners','touch-button-alias-real-input')
-negative={
- 'consumer-pause':'consumer missed release while callbacks disabled',
- 'consumer-replace':'old consumer retains held key after callback replacement',
-}
-if args.regressions_only:
-    negative={}
+negative={}
 positive=positive+('final-layer-no-repeat-control','final-no-layer-repeat-control',
     'final-forwarded-frame-control','final-layer-repeat','final-layer-suppressed-other-owner',
     'final-suppressed-frame','route-suppressed-release','route-touch-alias',
@@ -133,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix='matrix-deep-scan-') as temp:
         '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON','-DZMK_CONFIG='+str(root/'tests/kernel/config'),
         '-DEXTRA_DTC_OVERLAY_FILE='+str(root/'tests/deep-scan/extra.overlay')+
             (';'+str(root/'tests/deep-scan'/(args.negative_control+'.overlay')) if args.negative_control == 'inactive-matrix' else ''),
-        '-DZMK_EXTRA_MODULES='+str(root)+';'+str(root/'tests/deep-scan')]
+        '-DZMK_EXTRA_MODULES='+str(root)+';'+str(root/'tests/deep-scan')+';'+str(companion)]
     if iqs_root:
         command+=['-DMATRIX_TEST_IQS_ROOT='+str(iqs_root),'-DEXTRA_CONF_FILE='+str(root/'tests/deep-scan/iqs.conf')+
                   (';'+str(root/'tests/deep-scan'/(args.negative_control+'.conf')) if args.negative_control in ('iqs-inline-first','iqs-drop-release') else '')]
@@ -193,4 +188,4 @@ with tempfile.TemporaryDirectory(prefix='matrix-deep-scan-') as temp:
         (out/'iqs-after.json').write_text(json.dumps(iqs_after,indent=2))
         if iqs_before!=iqs_after: failures.append('IQS source drift')
     if failures: raise SystemExit('Unexpected results: '+','.join(failures))
-print(f'Matrix deep scan: positive{len(positive)}x3 PASS; counterexample{len(negative)}x3 named FAIL; remaining policy/interface observations stay explicit')
+print(f'Matrix deep scan: positive{len(positive)}x3 PASS; counterexample{len(negative)}x3 named FAIL; retired consumer handoff remains an unsupported boundary')

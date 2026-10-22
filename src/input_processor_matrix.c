@@ -11,7 +11,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/input/input.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/spinlock.h>
@@ -21,13 +20,7 @@
 #include <zmk/events/layer_state_changed.h>
 #include <zmk-input-matrix/matrix_runtime.h>
 
-#ifndef CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL
-#define CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL 3
-#endif
-LOG_MODULE_REGISTER(zmk_input_matrix_input_processor_matrix, CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL);
-
 #define COORD_UNINITIALIZED UINT16_MAX
-#define COORD_INVALID_ZERO  0xFFF
 #define ZIP_MATRIX_INIT_PRIORITY UTIL_INC(CONFIG_KSCAN_INIT_PRIORITY)
 #define ZIP_MATRIX_GESTURE_COUNT 5U
 #define ZIP_MATRIX_MAX_GRID_ROWS (UINT8_MAX / ZIP_MATRIX_GESTURE_COUNT)
@@ -54,14 +47,13 @@ struct zip_matrix_config {
     uint16_t y;
     uint16_t flick_threshold;
     uint16_t long_press_ms;
-    bool suppress_abs;
 #if ZIP_MATRIX_USE_DIAMOND_TAP
     bool diamond_tap;
 #endif
     const struct device *kscan_dev;
 };
 
-/* Three independent lifetimes: contact, input click pair, and report frame. */
+/* Contact and generated-key lifecycle stay here; source output policy is downstream. */
 struct zip_matrix_contact {
     uint16_t current_x, current_y;
     uint16_t start_x, start_y;
@@ -71,17 +63,7 @@ struct zip_matrix_contact {
     uint8_t flick_gesture;
     uint64_t flick_max_travel;
     uint32_t contact_id, hold_contact_id;
-};
-
-struct zip_matrix_buttons {
-    uint32_t suppressed, forwarded;
-    bool frame_pending;
-};
-
-enum zip_matrix_key_action {
-    ZIP_MATRIX_KEY_PASS,
-    ZIP_MATRIX_KEY_DROP,
-    ZIP_MATRIX_KEY_REPEAT,
+    int64_t hold_due_ms; /* deadline of this contact; zero means no armed hold */
 };
 
 struct zip_matrix_effects {
@@ -97,7 +79,6 @@ struct zip_matrix_stream {
     struct zip_matrix_data *owner;
     struct k_work_delayable hold_work;
     struct zip_matrix_contact contact;
-    struct zip_matrix_buttons buttons;
     atomic_t applied_generation;
 };
 
@@ -127,82 +108,7 @@ zip_matrix_live_config(const struct zip_matrix_data *data,
 
     config.flick_threshold = params->flick_threshold;
     config.long_press_ms = params->long_press_ms;
-    config.suppress_abs = params->suppress_abs;
     return config;
-}
-
-#define ZIP_MATRIX_TRACKED_BTNS 16
-
-/* Pair disposition survives contact resets for edges observed by this
- * processor. A route which bypasses Matrix has its own input/HID lifetime. */
-static enum zip_matrix_key_action
-zip_matrix_filter_button(struct zip_matrix_stream *stream,
-                         const struct input_event *event, bool suppress)
-{
-    uint32_t bit;
-    if (event->code == INPUT_BTN_TOUCH) {
-        bit = BIT(ZIP_MATRIX_TRACKED_BTNS);
-    } else if (event->code >= INPUT_BTN_0 &&
-               event->code < INPUT_BTN_0 + ZIP_MATRIX_TRACKED_BTNS) {
-        bit = BIT(event->code - INPUT_BTN_0);
-    } else {
-        return suppress ? ZIP_MATRIX_KEY_DROP : ZIP_MATRIX_KEY_PASS;
-    }
-
-    k_spinlock_key_t key = k_spin_lock(&stream->lock);
-    bool forwarded = (stream->buttons.forwarded & bit) != 0U;
-    bool dropped = (stream->buttons.suppressed & bit) != 0U;
-    enum zip_matrix_key_action action;
-    if (event->value > 0) {
-        if (forwarded) {
-            action = ZIP_MATRIX_KEY_REPEAT;
-        } else if (dropped || suppress) {
-            stream->buttons.suppressed |= bit;
-            action = ZIP_MATRIX_KEY_DROP;
-        } else {
-            stream->buttons.forwarded |= bit;
-            action = ZIP_MATRIX_KEY_PASS;
-        }
-    } else {
-        /* A normal route may have accepted this button's down before Matrix
-         * was selected. Preserve its up unless this stream suppressed the down.
-         * Touch remains an internal contact signal while Matrix is active. */
-        bool consume = dropped || (suppress && event->code == INPUT_BTN_TOUCH);
-        action = forwarded || !consume ? ZIP_MATRIX_KEY_PASS : ZIP_MATRIX_KEY_DROP;
-        stream->buttons.suppressed &= ~bit;
-        stream->buttons.forwarded &= ~bit;
-    }
-    k_spin_unlock(&stream->lock, key);
-    return action;
-}
-
-/* A consumed payload must not consume another event's report boundary. Keep
- * this frame lifetime outside contact/settings resets; avoid empty reports
- * for fully suppressed frames. Forwarded repeats retain their legacy marker. */
-static int zip_matrix_finish_frame(struct zip_matrix_stream *stream,
-                                   struct input_event *event, bool consume, bool repeat)
-{
-    k_spinlock_key_t key = k_spin_lock(&stream->lock);
-    bool pending = stream->buttons.frame_pending;
-    if (event->sync) {
-        stream->buttons.frame_pending = false;
-    } else if (!consume) {
-        stream->buttons.frame_pending = true;
-    }
-    k_spin_unlock(&stream->lock, key);
-
-    if (!consume) {
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-    if (repeat || (event->sync && pending)) {
-        event->type = INPUT_EV_MSC;
-        event->code = INPUT_MSC_SCAN;
-        event->value = 0;
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-    event->code = COORD_INVALID_ZERO;
-    event->sync = false;
-    return ZMK_INPUT_PROC_STOP;
 }
 
 static uint16_t clamp_coord_value(int32_t value, uint16_t max)
@@ -361,6 +267,7 @@ static void zip_matrix_clear_position(struct zip_matrix_contact *contact)
     contact->flick_latched = false;
     contact->flick_gesture = GESTURE_TAP;
     contact->flick_max_travel = 0U;
+    contact->hold_due_ms = 0;
 }
 
 /*
@@ -375,16 +282,26 @@ static void hold_work_handler(struct k_work *work)
     struct zip_matrix_stream *stream =
         CONTAINER_OF(work, struct zip_matrix_stream, hold_work.work);
     struct zip_matrix_data *data = stream->owner;
+    atomic_val_t generation = atomic_get(&data->reset_generation);
     struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(data);
     struct zip_matrix_config config = zip_matrix_live_config(data, &params);
+#ifdef ZIP_MATRIX_TEST_HOLD_HOOK
+    /* Owner native fixture controls this unlocked scheduling boundary. */
+    extern void zip_matrix_test_hold_snapshot(void);
+    zip_matrix_test_hold_snapshot();
+#endif
     k_spinlock_key_t key = k_spin_lock(&stream->lock);
     bool trigger = false;
     uint8_t r = 0;
     uint8_t c = 0;
     uint32_t work_contact_id = 0;
 
-    if (params.enabled && stream->contact.is_btn_touch && !stream->contact.is_holding && !stream->contact.flick_latched &&
-        stream->contact.start_x != COORD_UNINITIALIZED) {
+    if (generation == atomic_get(&data->reset_generation) &&
+        generation == atomic_get(&stream->applied_generation) &&
+        params.enabled && params.long_press_ms > 0 &&
+        stream->contact.is_btn_touch && !stream->contact.is_holding && !stream->contact.flick_latched &&
+        stream->contact.start_x != COORD_UNINITIALIZED &&
+        k_uptime_get() >= stream->contact.hold_due_ms) {
         calculate_kscan_coordinates(&config, stream->contact.start_x, stream->contact.start_y, GESTURE_TAP,
                                     &r, &c);
         stream->contact.is_holding = true;
@@ -509,6 +426,7 @@ static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
                 data->contact.flick_max_travel = 0U;
                 data->contact.start_x = COORD_UNINITIALIZED;
                 data->contact.start_y = COORD_UNINITIALIZED;
+                data->contact.hold_due_ms = 0;
             } else if (!on && was_touch) {
                 data->contact.is_btn_touch = false;
             }
@@ -526,6 +444,8 @@ static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
                 data->contact.start_x = data->contact.current_x;
                 data->contact.start_y = data->contact.current_y;
                 effects->schedule_hold = cfg->long_press_ms > 0;
+                data->contact.hold_due_ms = effects->schedule_hold ?
+                    k_uptime_get() + cfg->long_press_ms : 0;
             } else if (flick_enabled(cfg) && data->contact.start_x != COORD_UNINITIALIZED &&
                        !(data->contact.is_holding && data->contact.hold_contact_id == data->contact.contact_id)) {
                 int32_t dx = (int32_t)data->contact.current_x - (int32_t)data->contact.start_x;
@@ -629,39 +549,30 @@ static int zip_matrix_process_event(const struct device *dev, struct input_event
 {
     struct zip_matrix_data *owner = dev->data;
     struct zip_matrix_stream *data = stream_for_event(owner, state);
-    if (data == NULL) {
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
+    if (data == NULL) { return ZMK_INPUT_PROC_CONTINUE; }
     atomic_val_t generation = atomic_get(&owner->reset_generation);
     if (atomic_get(&data->applied_generation) != generation) {
         zip_matrix_resync_stream(owner, data, generation);
     }
-
     struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(owner);
     struct zip_matrix_config cfg = zip_matrix_live_config(owner, &params);
-    bool active = params.enabled;
-    bool suppress = active;
-    bool release = event->type == INPUT_EV_KEY && event->value <= 0;
-    enum zip_matrix_key_action action = release ? zip_matrix_filter_button(data, event, suppress)
-                                                : ZIP_MATRIX_KEY_PASS;
     bool valid = true;
-    if (active) {
+    if (params.enabled) {
         struct zip_matrix_effects effects = {0};
         zip_matrix_reduce_contact(data, &cfg, event, &effects);
         valid = zip_matrix_apply_effects(owner, data, &cfg, &effects, generation);
     }
-    if (valid && event->type == INPUT_EV_KEY && !release) {
-        atomic_val_t current = atomic_get(&owner->reset_generation);
-        if (current != generation) {
-            zip_matrix_resync_stream(owner, data, current);
-            valid = false;
-        } else {
-            action = zip_matrix_filter_button(data, event, suppress);
-        }
+    atomic_val_t after = atomic_get(&owner->reset_generation);
+    if (after != generation) {
+        zip_matrix_resync_stream(owner, data, after);
+        valid = false;
     }
-    bool consume = action != ZIP_MATRIX_KEY_PASS || (!valid && !release) ||
-                   (active && event->type == INPUT_EV_ABS && cfg.suppress_abs);
-    return zip_matrix_finish_frame(data, event, consume, action == ZIP_MATRIX_KEY_REPEAT);
+    /* Gesture generation fences affect only gesture effects. Original source
+     * buttons, including presses/repeats and releases, reach the final owner. */
+    if (!valid && event->type != INPUT_EV_KEY) {
+        event->type = INPUT_EV_MSC; event->code = INPUT_MSC_SCAN; event->value = 0;
+    }
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int zip_matrix_handle_event(const struct device *dev, struct input_event *event,
@@ -685,7 +596,6 @@ static int zip_matrix_init(const struct device *dev)
         .enabled = true,
         .flick_threshold = cfg->flick_threshold,
         .long_press_ms = cfg->long_press_ms,
-        .suppress_abs = cfg->suppress_abs,
     };
     atomic_set(&data->reset_generation, 0);
 
@@ -700,9 +610,6 @@ static int zip_matrix_init(const struct device *dev)
         stream->contact.hold_release_pending = false;
         stream->contact.contact_id = 0;
         stream->contact.hold_contact_id = 0;
-        stream->buttons.suppressed = 0;
-        stream->buttons.forwarded = 0;
-        stream->buttons.frame_pending = false;
         atomic_set(&stream->applied_generation, 0);
         k_work_init_delayable(&stream->hold_work, hold_work_handler);
     }
@@ -769,7 +676,6 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
         .rows = DT_INST_PROP(n, rows), .columns = DT_INST_PROP(n, columns), \
         .x = DT_INST_PROP(n, x), .y = DT_INST_PROP(n, y), \
         .flick_threshold = DT_INST_PROP(n, flick_threshold), .long_press_ms = DT_INST_PROP(n, long_press_ms), \
-        .suppress_abs = DT_INST_PROP(n, suppress_abs), \
         ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
         .kscan_dev = DEVICE_DT_GET(DT_INST_PHANDLE(n, kscan)), \
     }; \

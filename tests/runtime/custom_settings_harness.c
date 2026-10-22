@@ -30,6 +30,16 @@ struct zmk_custom_setting {
 typedef struct { int unused; } zmk_custom_CallRequest;
 typedef struct { int unused; } pb_callback_t;
 
+struct k_mutex { int depth; };
+static struct k_mutex settings_lock;
+#define K_FOREVER (-1)
+static void k_mutex_lock(struct k_mutex *lock,int timeout) {
+    (void)timeout; lock->depth++;
+}
+static void k_mutex_unlock(struct k_mutex *lock) {
+    assert(lock->depth>0); lock->depth--;
+}
+
 #define ARG_UNUSED(x) ((void)(x))
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -52,8 +62,8 @@ static int zmk_custom_setting_read(const struct zmk_custom_setting *setting,
 /* The apply step: one devicetree instance and its six values. */
 #include <zmk-input-matrix/matrix_runtime.h>
 #define ZMK_EV_EVENT_BUBBLE 0
-#define DT_INST_FOREACH_STATUS_OKAY(fn) fn(0)
-#define DEVICE_DT_INST_GET(n) (&instance)
+#define DT_INST_FOREACH_STATUS_OKAY(fn) fn(0) fn(1)
+#define DEVICE_DT_INST_GET(n) (&instances[n])
 typedef struct { int kind; const struct zmk_custom_setting *setting; } zmk_event_t;
 struct zmk_custom_setting_changed { const struct zmk_custom_setting *setting; };
 static struct zmk_custom_setting_changed changed_event;
@@ -63,7 +73,8 @@ static const struct zmk_custom_setting_changed *as_zmk_custom_setting_changed(co
     return &changed_event;
 }
 struct device { int unused; };
-static struct device instance;
+static struct device instances[2];
+#define instance instances[0]
 #define BOOL_SETTING(name, v)                                                                      \
     static struct zmk_custom_setting name = {.custom_subsystem_id = ZMK_INPUT_MATRIX_SUBSYSTEM,                                                      \
         .value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = (v)}}
@@ -73,15 +84,20 @@ static struct device instance;
 BOOL_SETTING(matrix_cs_enabled_0, true);
 INT_SETTING(matrix_cs_flick_threshold_0, 120);
 INT_SETTING(matrix_cs_long_press_ms_0, 300);
-BOOL_SETTING(matrix_cs_suppress_abs_0, true);
-static int applies;
-static struct zip_matrix_runtime_params applied;
+static struct zmk_custom_setting matrix_cs_enabled_1;
+static struct zmk_custom_setting matrix_cs_flick_threshold_1;
+static struct zmk_custom_setting matrix_cs_long_press_ms_1;
+static int node_applies[2];
+#define applies node_applies[0]
+static struct zip_matrix_runtime_params node_applied[2];
+#define applied node_applied[0]
 
 int zip_matrix_set_params(const struct device *dev,
                           const struct zip_matrix_runtime_params *params) {
-    assert(dev == &instance);
-    applies++;
-    applied = *params;
+    assert(dev==&instances[0] || dev==&instances[1]);
+    size_t n=(size_t)(dev-instances);
+    node_applies[n]++;
+    node_applied[n]=*params;
     return 0;
 }
 
@@ -141,19 +157,25 @@ static void test_unique_keys(void) {
     assert(errors == 0);
 }
 
-/* The six values are applied as one set, only when all read and fit. */
+/* The three values are applied as one set, only when all read and fit. */
+static void test_apply_all(void) {
+    matrix_cs_enabled_1=matrix_cs_enabled_0;
+    matrix_cs_flick_threshold_1=matrix_cs_flick_threshold_0;
+    matrix_cs_long_press_ms_1=matrix_cs_long_press_ms_0;
+    matrix_apply_settings(NULL);
+}
+
 static void test_apply(void) {
     const zmk_event_t changed = {1, &matrix_cs_enabled_0};
     assert(matrix_settings_event_cb(&changed) == ZMK_EV_EVENT_BUBBLE);
     assert(applies == 1 && applied.enabled && applied.flick_threshold == 120);
-    assert(applied.long_press_ms == 300 && applied.suppress_abs);
+    assert(applied.long_press_ms == 300);
 
     struct zmk_custom_setting *values[] = {
-        &matrix_cs_enabled_0, &matrix_cs_flick_threshold_0, &matrix_cs_long_press_ms_0,
-        &matrix_cs_suppress_abs_0};
+        &matrix_cs_enabled_0, &matrix_cs_flick_threshold_0, &matrix_cs_long_press_ms_0};
     for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
         values[i]->read_result = -2;
-        matrix_apply_settings();
+        test_apply_all();
         values[i]->read_result = 0;
     }
     assert(applies == 1);
@@ -163,23 +185,52 @@ static void test_apply(void) {
     static const int32_t thresholds[] = {0, UINT16_MAX + 1};
     for (size_t i = 0; i < ARRAY_SIZE(thresholds); i++) {
         matrix_cs_flick_threshold_0.value.int32_value = thresholds[i];
-        matrix_apply_settings();
+        test_apply_all();
     }
     matrix_cs_flick_threshold_0.value.int32_value = UINT16_MAX;
     static const int32_t holds[] = {-1, UINT16_MAX + 1};
     for (size_t i = 0; i < ARRAY_SIZE(holds); i++) {
         matrix_cs_long_press_ms_0.value.int32_value = holds[i];
-        matrix_apply_settings();
+        test_apply_all();
     }
     assert(applies == 1);
 
     /* The edges of the range are accepted. */
     matrix_cs_long_press_ms_0.value.int32_value = 0;
-    matrix_apply_settings();
+    test_apply_all();
     assert(applies == 2 && applied.flick_threshold == UINT16_MAX && applied.long_press_ms == 0);
 }
 
+static void test_targeted_events(void) {
+    const struct zmk_custom_setting foreign={.custom_subsystem_id="foreign"};
+    const zmk_event_t unrelated={1,&foreign};
+    int before0=node_applies[0], before1=node_applies[1];
+    assert(matrix_settings_event_cb(&unrelated)==ZMK_EV_EVENT_BUBBLE);
+    assert(node_applies[0]==before0 && node_applies[1]==before1 && "foreign setting must not reset nodes");
+    struct zmk_custom_setting *own[]={&matrix_cs_enabled_0,&matrix_cs_flick_threshold_0,&matrix_cs_long_press_ms_0};
+    for(size_t i=0;i<ARRAY_SIZE(own);i++) {
+        const zmk_event_t changed={1,own[i]};
+        assert(matrix_settings_event_cb(&changed)==ZMK_EV_EVENT_BUBBLE);
+        assert(node_applies[0]==before0+(int)i+1 && node_applies[1]==before1);
+    }
+    before0=node_applies[0];
+    struct zmk_custom_setting *values[]={&matrix_cs_enabled_1,&matrix_cs_flick_threshold_1,&matrix_cs_long_press_ms_1};
+    for(size_t i=0;i<ARRAY_SIZE(values);i++) {
+        const zmk_event_t changed={1,values[i]};
+        assert(matrix_settings_event_cb(&changed)==ZMK_EV_EVENT_BUBBLE);
+        assert(node_applies[0]==before0 && node_applies[1]==before1+(int)i+1 && "peer edit must not reset primary");
+    }
+    const zmk_event_t initialized={0,NULL};
+    assert(matrix_settings_event_cb(&initialized)==ZMK_EV_EVENT_BUBBLE);
+    assert(node_applies[0]==before0+1 && node_applies[1]==before1+4);
+    puts("matrix settings: foreign ignored, peer isolated, boot applies both PASS");
+}
+
 int main(void) {
+    matrix_cs_enabled_1=matrix_cs_enabled_0;
+    matrix_cs_flick_threshold_1=matrix_cs_flick_threshold_0;
+    matrix_cs_long_press_ms_1=matrix_cs_long_press_ms_0;
+
     assert(!matrix_namespace_handler(NULL, NULL));
     test_readers();
     test_unique_keys();
@@ -193,6 +244,7 @@ int main(void) {
     const zmk_event_t initialized = {0, NULL};
     assert(matrix_settings_event_cb(&initialized) == ZMK_EV_EVENT_BUBBLE);
     assert(reads > before_reads);
+    test_targeted_events();
     puts("matrix custom settings helpers: PASS");
     return 0;
 }

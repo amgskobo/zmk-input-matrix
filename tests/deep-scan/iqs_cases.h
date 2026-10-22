@@ -28,7 +28,7 @@ static void iqs_sequence(unsigned source,unsigned pairs,bool replaced) {
 }
 static void iqs_case(const char *name) {
     struct zip_matrix_runtime_params p=parameters();
-    p.enabled=true; p.long_press_ms=0; p.suppress_abs=true; apply(p);
+    p.enabled=true; p.long_press_ms=0; apply(p);
     __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
     bool overlap=strstr(name,"overlap")!=NULL;
     bool gate=strstr(name,"before-on")!=NULL;
@@ -77,12 +77,11 @@ static void iqs_case(const char *name) {
            zmk_hid_get_mouse_report()->body.buttons,(unsigned)reports,k_uptime_get());
     __ASSERT(!(zmk_hid_get_mouse_report()->body.buttons&1U),"IQS release left button held");
     if(overlap) {
-        __ASSERT_NO_MSG(reports==3 && iqs_reports[0].buttons==1 && iqs_reports[2].buttons==0);
-        __ASSERT_NO_MSG(iqs_reports[1].buttons==0 || iqs_reports[1].buttons==1);
+        __ASSERT_NO_MSG(reports==2 && iqs_reports[0].buttons==1 && iqs_reports[1].buttons==0);
         __ASSERT_NO_MSG(iqs_reports[0].time<matrix_iqs_edge(0,1).ms &&
                         matrix_iqs_edge(0,1).ms<matrix_iqs_edge(1,1).ms &&
-                        iqs_reports[2].time>=matrix_iqs_edge(1,1).ms);
-        bool early=iqs_reports[1].buttons==0;
+                        iqs_reports[1].time>=matrix_iqs_edge(1,1).ms);
+        bool early=iqs_reports[1].time<matrix_iqs_edge(1,1).ms;
         printk("CLICK OBSERVATION case=%s early_release=%u time=%lld\n",
                name,early,k_uptime_get());
         iqs_capture=true;
@@ -91,8 +90,8 @@ static void iqs_case(const char *name) {
         k_msleep(5);
         key=k_spin_lock(&iqs_trace_lock);
         iqs_capture=false;
-        __ASSERT_NO_MSG(iqs_report_count==5 && iqs_reports[3].buttons==1 &&
-                        iqs_reports[4].buttons==0);
+        __ASSERT_NO_MSG(iqs_report_count==4 && iqs_reports[2].buttons==1 &&
+                        iqs_reports[3].buttons==0);
         k_spin_unlock(&iqs_trace_lock,key);
         __ASSERT_NO_MSG(matrix_iqs_edge(1,2).value==1 && matrix_iqs_edge(1,3).value==0);
         __ASSERT_NO_MSG(matrix_iqs_edge(1,3).ms-matrix_iqs_edge(1,2).ms>=20);
@@ -113,10 +112,13 @@ static void iqs_case(const char *name) {
     } else {
         if(!to_pointer) __ASSERT_NO_MSG(reports==0);
         else {
-            __ASSERT_NO_MSG(reports==1+(clicks-1)*2);
-            __ASSERT_NO_MSG(iqs_reports[0].buttons==0);
-            for(unsigned i=1;i<reports;i++)
-                __ASSERT_NO_MSG(iqs_reports[i].buttons==(i%2==1));
+            /* The suppressed first ON/OFF stays silent across route departure.
+             * Only complete later pointer pairs produce reports. */
+            __ASSERT_NO_MSG(reports==(clicks-1)*2);
+            for(unsigned i=0;i<reports;i++) {
+                __ASSERT_NO_MSG(iqs_reports[i].buttons==(i%2==0));
+                __ASSERT_NO_MSG(iqs_reports[i].time>=matrix_iqs_edge(1,i+2).ms);
+            }
         }
     }
     printk("matrix deep-scan PASS case=%s\n",name);

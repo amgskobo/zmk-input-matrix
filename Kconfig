@@ -47,8 +47,7 @@ config ZMK_INPUT_MATRIX_CUSTOM_SETTINGS
     depends on ZMK_INPUT_PROCESSOR_MATRIX
     depends on ZMK_CUSTOM_SETTINGS_STUDIO_RPC
     help
-      Publishes the enable switch, flick threshold, long-press delay and input
-      suppression flags through the shared custom-settings registry. The
+      Publishes the enable switch, flick threshold and long-press delay through the shared custom-settings registry. The
       registry owns persistence; the processor keeps only the live values.
 
 config ZMK_INPUT_MATRIX_LOG_LEVEL

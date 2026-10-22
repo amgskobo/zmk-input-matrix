@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zephyr/devicetree.h>
+#include <zephyr/kernel.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 
@@ -22,6 +23,8 @@
 #define CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL 3
 #endif
 LOG_MODULE_REGISTER(zmk_input_matrix_input_processor_matrix_custom_settings, CONFIG_ZMK_INPUT_MATRIX_LOG_LEVEL);
+
+static K_MUTEX_DEFINE(settings_lock);
 
 static bool matrix_namespace_handler(const zmk_custom_CallRequest *request,
                                      pb_callback_t *encode_response);
@@ -66,8 +69,7 @@ static bool matrix_namespace_handler(const zmk_custom_CallRequest *request,
     MATRIX_INT_SETTING(n, flick_threshold, "flick_threshold", DT_INST_PROP(n, flick_threshold),  \
                        1, UINT16_MAX)                                                               \
     MATRIX_INT_SETTING(n, long_press_ms, "long_press_ms", DT_INST_PROP(n, long_press_ms), 0,     \
-                       UINT16_MAX)                                                                  \
-    MATRIX_BOOL_SETTING(n, suppress_abs, "suppress_abs", DT_INST_PROP(n, suppress_abs))
+                       UINT16_MAX)
 
 
 DT_INST_FOREACH_STATUS_OKAY(MATRIX_SETTINGS)
@@ -95,14 +97,16 @@ static bool read_int32(const struct zmk_custom_setting *setting, int32_t *out)
 }
 
 #define MATRIX_APPLY(n)                                                                            \
-    {                                                                                              \
+    if (changed_setting == NULL || \
+        changed_setting == &matrix_cs_enabled_##n || \
+        changed_setting == &matrix_cs_flick_threshold_##n || \
+        changed_setting == &matrix_cs_long_press_ms_##n) { \
         struct zip_matrix_runtime_params params;                                                   \
         int32_t flick_threshold;                                                                   \
         int32_t long_press_ms;                                                                     \
         if (read_bool(&matrix_cs_enabled_##n, &params.enabled) &&                                  \
             read_int32(&matrix_cs_flick_threshold_##n, &flick_threshold) &&                        \
             read_int32(&matrix_cs_long_press_ms_##n, &long_press_ms) &&                            \
-            read_bool(&matrix_cs_suppress_abs_##n, &params.suppress_abs) &&                        \
             flick_threshold > 0 && flick_threshold <= UINT16_MAX && long_press_ms >= 0 &&          \
             long_press_ms <= UINT16_MAX) {                                                         \
             params.flick_threshold = (uint16_t)flick_threshold;                                    \
@@ -111,19 +115,18 @@ static bool read_int32(const struct zmk_custom_setting *setting, int32_t *out)
         }                                                                                          \
     }
 
-static void matrix_apply_settings(void)
+static void matrix_apply_settings(const struct zmk_custom_setting *changed_setting)
 {
+    /* Concurrent notifications must not apply an older snapshot last. */
+    k_mutex_lock(&settings_lock, K_FOREVER);
     DT_INST_FOREACH_STATUS_OKAY(MATRIX_APPLY)
+    k_mutex_unlock(&settings_lock);
 }
 
-static int matrix_settings_event_cb(const zmk_event_t *eh)
-{
+static int matrix_settings_event_cb(const zmk_event_t *eh) {
     const struct zmk_custom_setting_changed *changed = as_zmk_custom_setting_changed(eh);
-    if (changed != NULL &&
-        strcmp(changed->setting->custom_subsystem_id, ZMK_INPUT_MATRIX_SUBSYSTEM) != 0) {
-        return ZMK_EV_EVENT_BUBBLE;
-    }
-    matrix_apply_settings();
+    /* Boot loads every node. An edit must not reset another node's live state. */
+    matrix_apply_settings(changed == NULL ? NULL : changed->setting);
     return ZMK_EV_EVENT_BUBBLE;
 }
 

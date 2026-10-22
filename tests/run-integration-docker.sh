@@ -38,4 +38,10 @@ if [ -n "${ZMK_TEST_OUTPUT:-}" ]; then
     docker_args+=(--volume "$parent:/results" --env "ZMK_TEST_OUTPUT=/results/$(basename -- "$output")")
 fi
 
+if [ ! -f "${ZMK_TEST_SUPPRESS_ROOT:-}/src/input_processor_suppress.c" ]; then
+    echo 'explicit suppression companion required' >&2; exit 2
+fi
+companion="$(CDPATH='' cd -- "$ZMK_TEST_SUPPRESS_ROOT" && pwd)"
+docker_args+=(--volume "$companion:/suppress:ro" --env ZMK_TEST_SUPPRESS_ROOT=/suppress)
+
 docker "${docker_args[@]}" "$image" /bin/bash /src/tests/integration/run.sh "$@"

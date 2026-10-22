@@ -35,9 +35,6 @@ if mode == "quick":
 
 root = pathlib.Path(__file__).resolve().parents[2]
 source_dir = root / "src"
-links = ()
-# Sources with a coverage gate of their own.
-elsewhere = ()
 geometry = (
     "clamp_coord_value",
     "calculate_diamond_column",
@@ -52,8 +49,6 @@ fixtures = (
     ("driver", "input_processor_matrix.c", (
         "zip_matrix_params_snapshot",
         "zip_matrix_live_config",
-        "zip_matrix_filter_button",
-        "zip_matrix_finish_frame",
         "zip_matrix_clear_position",
         "hold_work_handler",
         "stream_for_event",
@@ -192,8 +187,7 @@ def misses(gcov_text, ranges):
 def ungated_functions():
     """Functions defined in the sources that no fixture gates.
 
-    A file named in `elsewhere` has a gate of its own and is skipped, so a
-    function added to any other source without a test fails this run.
+    A function added to any production source without a gate fails this run.
     """
     gated = {}
     for _fixture, file_name, names, _support in fixtures:
@@ -203,8 +197,6 @@ def ungated_functions():
         r"[\s*]+([a-z_0-9]+)\([^;]*?\)\s*\{", re.M)
     missing = []
     for path in sorted(source_dir.glob("*.c")):
-        if path.name in elsewhere:
-            continue
         defined = set(definition_pattern.findall(path.read_text(encoding="utf-8")))
         missing += [f"{path.name}: {name}" for name in sorted(defined - gated.get(path.name, set()))]
     return missing
@@ -232,15 +224,17 @@ def render_fixture(fixture, file_name, gated, support, source_path=None):
     if "/* DRIVER_TYPES */" in harness:
         types = []
         names = ("kscan_matrix_edge", "kscan_matrix_data", "kscan_matrix_config") if fixture == "kscan" else (
-            "zip_matrix_config", "zip_matrix_contact", "zip_matrix_buttons", "zip_matrix_effects",
+            "zip_matrix_config", "zip_matrix_contact", "zip_matrix_effects",
             "zip_matrix_stream", "zip_matrix_data")
-        if fixture == "driver":
-            for name in ("gesture_type", "zip_matrix_key_action"):
+        if fixture in ("driver", "geometry"):
+            for name in ("gesture_type",):
                 match = re.search(r"^enum " + name + r" \{.*?^\};", source, re.M | re.S)
                 if match is None:
                     raise RuntimeError("missing enum: " + name)
                 types.append(match.group())
             types.append("struct zip_matrix_data;")
+        if fixture == "geometry":
+            names = ("zip_matrix_config",)
         for name in names:
             match = re.search(r"^struct " + name + r" \{.*?^\};", source, re.M | re.S)
             if match is None:
@@ -267,7 +261,7 @@ def main():
                 subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
                                 "-I" + str(root / "include"), "-I" + str(source_dir),
                                 "-I" + str(root / "tests/runtime"),
-                                str(unit), *map(str, links), "-o", str(binary)],
+                                str(unit), "-o", str(binary)],
                                check=True)
                 subprocess.run([str(binary)], check=True)
             if fixture == "kscan":

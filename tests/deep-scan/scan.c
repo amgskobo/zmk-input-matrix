@@ -10,7 +10,7 @@
 #include "../kernel/module/main.c"
 #pragma pop_macro("K_THREAD_DEFINE")
 
-static bool views[2][2];
+static bool views[2];
 static int callback_action;
 static bool forward_to_keymap;
 static const char *case_name;
@@ -65,6 +65,13 @@ static struct zip_matrix_runtime_params parameters(void) {
     __ASSERT_NO_MSG(zip_matrix_get_params(matrix, &p) == 0);
     return p;
 }
+/* Composition scenarios choose output policy explicitly. Matrix's settings
+ * setter never knows the final filter or changes this independent policy. */
+static void source_policy(bool suppress) {
+    int rc = suppress ? zmk_keymap_layer_deactivate(4, false)
+                      : zmk_keymap_layer_activate(4, false);
+    __ASSERT_NO_MSG(rc >= 0);
+}
 static void apply(struct zip_matrix_runtime_params p) {
     __ASSERT_NO_MSG(zip_matrix_set_params(matrix, &p) == 0);
 }
@@ -72,27 +79,26 @@ static int button(uint8_t stream, uint16_t code, int32_t value) {
     struct input_event e = {.type=INPUT_EV_KEY,.code=code,.value=value,.sync=true};
     struct zmk_input_processor_state s = {.input_device_index=stream};
     int result=zmk_input_processor_handle_event(matrix,&e,0,0,&s);
-    if(result==ZMK_INPUT_PROC_CONTINUE && e.type==INPUT_EV_MSC) {
-        __ASSERT_NO_MSG(value && e.code==INPUT_MSC_SCAN && e.value==0 && e.sync);
-    }
+    __ASSERT_NO_MSG(result == ZMK_INPUT_PROC_CONTINUE);
+    __ASSERT_NO_MSG(e.type == INPUT_EV_KEY && e.code == code && e.value == value && e.sync);
     printk("BUTTON case=%s stream=%u input=%u value=%d result=%d output=%u sync=%u time=%lld\n",
            case_name,stream,code,value,result,e.code,e.sync,k_uptime_get());
     return result;
 }
-static void observe(unsigned consumer, const struct device *dev, uint32_t row,
+static void observe_a(const struct device *dev, uint32_t row,
                     uint32_t col, bool pressed) {
     record(dev,row,col,pressed);
     __ASSERT_NO_MSG(row==0 && col<2);
-    views[consumer][col]=pressed;
+    views[col]=pressed;
     printk("EDGE case=%s consumer=%u row=%u col=%u pressed=%u time=%lld\n",
-           case_name,consumer,row,col,pressed,k_uptime_get());
+           case_name,0U,row,col,pressed,k_uptime_get());
     if(forward_to_keymap) {
         __ASSERT_NO_MSG(zmk_keymap_position_state_changed(
             ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,row*2+col,pressed,k_uptime_get())>=0);
         printk("HID N0=%u N1=%u time=%lld\n",zmk_hid_is_pressed(N0),
                zmk_hid_is_pressed(N1),k_uptime_get());
     }
-    if(consumer==0 && pressed && callback_action) {
+    if(pressed && callback_action) {
         int action=callback_action; callback_action=0;
         if(action==1) {
             struct zip_matrix_runtime_params p=parameters(); p.enabled=false; apply(p);
@@ -107,13 +113,7 @@ static void observe(unsigned consumer, const struct device *dev, uint32_t row,
         }
     }
 }
-static void observe_a(const struct device *dev,uint32_t row,uint32_t col,bool pressed) {
-    observe(0,dev,row,col,pressed);
-}
-static void observe_b(const struct device *dev,uint32_t row,uint32_t col,bool pressed) {
-    observe(1,dev,row,col,pressed);
-}
-static void check_clean(void) { __ASSERT_NO_MSG(!views[0][0] && !views[0][1]); }
+static void check_clean(void) { __ASSERT_NO_MSG(!views[0] && !views[1]); }
 static void start_hold(uint8_t stream,int32_t x) { contact(stream,x); k_msleep(30); }
 
 static void long_walk(void) {
@@ -136,8 +136,8 @@ static void long_walk(void) {
         }
         k_msleep(22);
         printk("STEP seed=43104d2b n=%u op=%u stream=%u expected=%u%u actual=%u%u time=%lld\n",
-               step,op,s,touch[0],touch[1],views[0][0],views[0][1],k_uptime_get());
-        __ASSERT_NO_MSG(views[0][0]==touch[0] && views[0][1]==touch[1]);
+               step,op,s,touch[0],touch[1],views[0],views[1],k_uptime_get());
+        __ASSERT_NO_MSG(views[0]==touch[0] && views[1]==touch[1]);
         count=0;
     }
     release(0); release(1); check_clean();
@@ -182,11 +182,24 @@ static void review(void *a,void *b,void *c) {
     __ASSERT_NO_MSG(kscan_config(output,observe_a)==0);
     __ASSERT_NO_MSG(kscan_enable_callback(output)==0);
     struct zip_matrix_runtime_params p=parameters();
-    p.enabled=true; p.long_press_ms=20; p.suppress_abs=false; apply(p);
+    p.enabled=true; p.long_press_ms=20; apply(p);
     clear();
     forward_to_keymap=strstr(case_name,"real-hid")!=NULL || strstr(case_name,"separate-instances")!=NULL;
-    if(!strcmp(case_name,"matrix-key-isolation")) {
-        p.long_press_ms=0; p.suppress_abs=true; apply(p);
+    if(!strcmp(case_name,"independent-filter-policy")) {
+        p.enabled=false; apply(p);
+        __ASSERT_NO_MSG(!zmk_keymap_layer_active(4));
+        unsigned before=mouse_sends;
+        actual_input(INPUT_BTN_0,1); actual_input(INPUT_BTN_0,0);
+        __ASSERT_NO_MSG(mouse_sends==before);
+        source_policy(false);
+        p.enabled=true; apply(p);
+        __ASSERT_NO_MSG(zmk_keymap_layer_active(4));
+        actual_input(INPUT_BTN_0,1);
+        __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
+        actual_input(INPUT_BTN_0,0); check_clean();
+        printk("PASS: Matrix enable and final suppression policy are independent\n");
+    } else if(!strcmp(case_name,"matrix-key-isolation")) {
+        p.long_press_ms=0; apply(p);
         unsigned before=mouse_sends;
         const uint16_t codes[]={INPUT_BTN_0, INPUT_BTN_0+4, INPUT_BTN_TOUCH};
         for(size_t i=0; i<ARRAY_SIZE(codes); i++) {
@@ -202,17 +215,17 @@ static void review(void *a,void *b,void *c) {
         expect(0,0,true); expect(1,0,false); check_clean();
     } else if(!strcmp(case_name,"different-cells-real-hid")) {
         contact(0,100); contact(1,900); k_msleep(30);
-        __ASSERT_NO_MSG(count==2 && views[0][0] && views[0][1]);
+        __ASSERT_NO_MSG(count==2 && views[0] && views[1]);
         __ASSERT_NO_MSG(zmk_hid_is_pressed(N0) && zmk_hid_is_pressed(N1));
-        release(0); __ASSERT_NO_MSG(!views[0][0] && views[0][1]);
+        release(0); __ASSERT_NO_MSG(!views[0] && views[1]);
         __ASSERT_NO_MSG(!zmk_hid_is_pressed(N0) && zmk_hid_is_pressed(N1));
         release(1); check_clean(); __ASSERT_NO_MSG(count==4);
     } else if(!strcmp(case_name,"separate-instances-control") ||
               !strcmp(case_name,"separate-instances-same-cell")) {
         bool shared=!strcmp(case_name,"separate-instances-same-cell");
         contact(0,100); secondary_contact(shared?100:900); k_msleep(30);
-        __ASSERT_NO_MSG(count==(shared?1:2) && views[0][0]);
-        if(!shared) __ASSERT_NO_MSG(views[0][1] && zmk_hid_is_pressed(N0) && zmk_hid_is_pressed(N1));
+        __ASSERT_NO_MSG(count==(shared?1:2) && views[0]);
+        if(!shared) __ASSERT_NO_MSG(views[1] && zmk_hid_is_pressed(N0) && zmk_hid_is_pressed(N1));
         release(0);
         if(shared) {
             printk("OBSERVE second processor still holds; HID N0=%u\n",zmk_hid_is_pressed(N0));
@@ -225,7 +238,7 @@ static void review(void *a,void *b,void *c) {
         p.long_press_ms=0; apply(p); contact(0,100); release(0);
         __ASSERT_NO_MSG(count==2); expect(0,0,true); expect(1,0,false); check_clean();
     } else if(!strcmp(case_name,"disable-held")) {
-        start_hold(0,100); __ASSERT_NO_MSG(views[0][0]);
+        start_hold(0,100); __ASSERT_NO_MSG(views[0]);
         p.enabled=false; apply(p); check_clean();
         p.enabled=true; apply(p); k_msleep(30); __ASSERT_NO_MSG(count==2);
     } else if(!strcmp(case_name,"reentrant-disable")) {
@@ -235,7 +248,7 @@ static void review(void *a,void *b,void *c) {
     } else if(!strcmp(case_name,"reentrant-retouch")) {
         callback_action=2; start_hold(0,100);
         __ASSERT_NO_MSG(count==2); expect(0,0,true); expect(1,0,false); check_clean();
-        k_msleep(25); __ASSERT_NO_MSG(count==3 && views[0][1]);
+        k_msleep(25); __ASSERT_NO_MSG(count==3 && views[1]);
         expect(2,1,true); release(0); __ASSERT_NO_MSG(count==4); check_clean();
     } else if(!strcmp(case_name,"forwarded-release")) {
         p.enabled=false; apply(p);
@@ -244,32 +257,32 @@ static void review(void *a,void *b,void *c) {
         __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_CONTINUE);
     } else if(!strcmp(case_name,"independent-button-release")) {
         p.enabled=true; apply(p);
-        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_STOP);
+        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_CONTINUE);
         /* Stream1 may owe an up accepted on a route which bypassed Matrix.
          * Its up must not clear stream0's suppressed-pair record. */
         __ASSERT_NO_MSG(button(1,INPUT_BTN_0,0)==ZMK_INPUT_PROC_CONTINUE);
-        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_STOP);
+        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_CONTINUE);
     } else if(!strcmp(case_name,"invalid-stream")) {
-        start_hold(0,100); __ASSERT_NO_MSG(views[0][0]);
+        start_hold(0,100); __ASSERT_NO_MSG(views[0]);
         __ASSERT_NO_MSG(button(255,INPUT_BTN_TOUCH,0)==ZMK_INPUT_PROC_CONTINUE);
-        __ASSERT_NO_MSG(count==1 && views[0][0]); release(0); check_clean();
+        __ASSERT_NO_MSG(count==1 && views[0]); release(0); check_clean();
     } else if(!strcmp(case_name,"long-walk")) {
         long_walk();
     } else if(!strcmp(case_name,"same-cell-real-hid")) {
         contact(0,100); contact(1,100); k_msleep(30);
-        __ASSERT_NO_MSG(count==1 && views[0][0]); release(0);
-        printk("OBSERVE other stream still holds; output=%u\n",views[0][0]);
+        __ASSERT_NO_MSG(count==1 && views[0]); release(0);
+        printk("OBSERVE other stream still holds; output=%u\n",views[0]);
         __ASSERT(zmk_hid_is_pressed(N0),"real HID key cleared while another stream holds it");
-        __ASSERT(views[0][0],"same-cell outstanding hold was released");
+        __ASSERT(views[0],"same-cell outstanding hold was released");
         __ASSERT_NO_MSG(count==1); release(1); check_clean();
         __ASSERT_NO_MSG(count==2);
         __ASSERT_NO_MSG(!zmk_hid_is_pressed(N0));
     } else if(!strcmp(case_name,"tap-over-hold-real-hid")) {
         start_hold(0,100); contact(1,100); release(1);
         __ASSERT_NO_MSG(count==1); expect(0,0,true);
-        printk("OBSERVE stream0 hold overlaps stream1 tap; output=%u\n",views[0][0]);
+        printk("OBSERVE stream0 hold overlaps stream1 tap; output=%u\n",views[0]);
         __ASSERT(zmk_hid_is_pressed(N0),"real HID key cleared by overlapping tap");
-        __ASSERT(views[0][0],"tap released another stream's held cell");
+        __ASSERT(views[0],"tap released another stream's held cell");
         release(0); check_clean(); __ASSERT_NO_MSG(count==2);
         __ASSERT_NO_MSG(!zmk_hid_is_pressed(N0));
     } else if(!strcmp(case_name,"shared-disable-instance") || !strcmp(case_name,"shared-layer-reset")) {
@@ -286,7 +299,7 @@ static void review(void *a,void *b,void *c) {
         __ASSERT_NO_MSG(count==2 && !zmk_hid_is_pressed(N0)); check_clean();
     } else if(!strcmp(case_name,"tap-during-press-callback")) {
         callback_action=4; start_hold(0,100);
-        __ASSERT_NO_MSG(count==1 && views[0][0]); release(0);
+        __ASSERT_NO_MSG(count==1 && views[0]); release(0);
         __ASSERT_NO_MSG(count==2); check_clean();
     } else if(!strcmp(case_name,"concurrent-output")) {
         forward_to_keymap=true; callback_action=3;
@@ -316,10 +329,10 @@ static void review(void *a,void *b,void *c) {
               !strcmp(case_name,"repeat-real-input") || !strcmp(case_name,"touch-real-input")) {
         bool touch=!strcmp(case_name,"touch-real-input");
         uint16_t code=touch?INPUT_BTN_TOUCH:INPUT_BTN_0;
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         actual_input(code,1);
         __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons & 1U);
-        p.enabled=true; apply(p);
+        p.enabled=true; apply(p); source_policy(true);
         if(!strcmp(case_name,"repeat-real-input")) actual_input(code,1);
         actual_input(code,0);
         unsigned buttons=zmk_hid_get_mouse_report()->body.buttons;
@@ -328,23 +341,23 @@ static void review(void *a,void *b,void *c) {
         else __ASSERT(!(buttons&1U),"real mouse button remains held after repeated input");
     } else if(!strcmp(case_name,"repeat-passthrough-real-input") ||
               !strcmp(case_name,"disabled-button-real-input")) {
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         actual_input(INPUT_BTN_0,1);
-        if(!strcmp(case_name,"disabled-button-real-input")) { p.enabled=false; apply(p); }
+        if(!strcmp(case_name,"disabled-button-real-input")) { p.enabled=false; apply(p); source_policy(false); }
         actual_input(INPUT_BTN_0,1); actual_input(INPUT_BTN_0,1);
-        if(!p.enabled) { p.enabled=true; p.enabled=true; apply(p); }
+        if(!p.enabled) { p.enabled=true; p.enabled=true; apply(p); source_policy(true); }
         actual_input(INPUT_BTN_0,0);
         __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
     } else if(!strcmp(case_name,"suppressed-pair-policy-edit")) {
-        p.enabled=true; apply(p);
-        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_STOP);
-        p.enabled=false; apply(p);
-        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_STOP);
-        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_STOP);
+        p.enabled=true; apply(p); source_policy(true);
+        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_CONTINUE);
+        p.enabled=false; apply(p); source_policy(false);
+        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_CONTINUE);
+        __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_CONTINUE);
         __ASSERT_NO_MSG(button(0,INPUT_BTN_0,1)==ZMK_INPUT_PROC_CONTINUE);
         __ASSERT_NO_MSG(button(0,INPUT_BTN_0,0)==ZMK_INPUT_PROC_CONTINUE);
     } else if(!strcmp(case_name,"repeat-frame-real-input")) {
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         actual_input(INPUT_BTN_0,1);
         unsigned before=mouse_sends;
         const struct device *source=DEVICE_DT_GET(DT_NODELABEL(matrix_source_left));
@@ -355,7 +368,7 @@ static void review(void *a,void *b,void *c) {
         __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
     } else if(!strcmp(case_name,"independent-mouse-owners") ||
               !strcmp(case_name,"touch-button-alias-real-input")) {
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         bool alias=!strcmp(case_name,"touch-button-alias-real-input");
         const struct device *second=DEVICE_DT_GET(DT_NODELABEL(matrix_source_right));
         actual_input(alias?INPUT_BTN_TOUCH:INPUT_BTN_0,1);
@@ -364,7 +377,7 @@ static void review(void *a,void *b,void *c) {
             __ASSERT_NO_MSG(input_report_key(second,INPUT_BTN_0,1,true,K_FOREVER)==0);
             k_msleep(5);
         }
-        p.enabled=true; apply(p);
+        p.enabled=true; apply(p); source_policy(true);
         actual_input(alias?INPUT_BTN_TOUCH:INPUT_BTN_0,1);
         actual_input(alias?INPUT_BTN_TOUCH:INPUT_BTN_0,0);
         __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
@@ -374,18 +387,6 @@ static void review(void *a,void *b,void *c) {
             k_msleep(5);
         }
         __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
-    } else if(!strcmp(case_name,"consumer-pause")) {
-        start_hold(0,100); __ASSERT_NO_MSG(views[0][0]);
-        __ASSERT_NO_MSG(kscan_disable_callback(output)==0); release(0);
-        __ASSERT_NO_MSG(kscan_enable_callback(output)==0); k_msleep(30);
-        printk("OBSERVE same consumer resumes with output=%u count=%u\n",views[0][0],(unsigned)count);
-        __ASSERT(!views[0][0],"consumer missed release while callbacks disabled");
-    } else if(!strcmp(case_name,"consumer-replace")) {
-        start_hold(0,100); __ASSERT_NO_MSG(views[0][0]);
-        __ASSERT_NO_MSG(kscan_config(output,observe_b)==0); release(0);
-        printk("OBSERVE old consumer=%u new consumer=%u count=%u\n",
-               views[0][0],views[1][0],(unsigned)count);
-        __ASSERT(!views[0][0],"old consumer retains held key after callback replacement");
     } else {
         __ASSERT(false,"unknown matrix deep-scan case");
     }

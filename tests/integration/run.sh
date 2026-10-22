@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 set -euo pipefail
+companion="${ZMK_TEST_SUPPRESS_ROOT:-}"
 
 variant="${1:-upstream}"
 case "$variant" in
@@ -22,6 +23,10 @@ fi
 if [ -n "${ZMK_TEST_IQS_ROOT:-}" ] && [ ! -f "$ZMK_TEST_IQS_ROOT/src/iqs7211e.c" ]; then
     echo "IQS producer source missing: $ZMK_TEST_IQS_ROOT" >&2
     exit 2
+fi
+
+if [ ! -f "$companion/src/input_processor_suppress.c" ]; then
+    echo 'explicit suppression companion required' >&2; exit 2
 fi
 
 if [ -n "${ZMK_TEST_OFFLINE_WORKSPACE:-}" ]; then
@@ -56,18 +61,8 @@ west zephyr-export
 workspace="$work_dir"
 fi
 
-export ZEPHYR_BASE="$workspace/zephyr"
-# Zephyr itself is a symlink in an offline workspace. Discover modules from
-# this selected manifest, rather than the cache workspace above that symlink.
-modules=()
-while IFS= read -r project; do
-    if [ -f "$project/zephyr/module.yml" ] || [ -f "$project/zephyr/module.yaml" ] ||
-       { [ -f "$project/zephyr/CMakeLists.txt" ] && [ -f "$project/zephyr/Kconfig" ]; }; then
-        modules+=("$project")
-    fi
-done < <(west list -f '{abspath}')
-export ZEPHYR_MODULES="$(IFS=';'; echo "${modules[*]}")"
-export Zephyr_DIR="$workspace/zephyr/share/zephyr-package/cmake"
+source /src/tests/integration/workspace-env.sh
+zmk_test_select_workspace "$workspace"
 
 cmake_args=()
 if [ "$variant" = dya ]; then
@@ -76,7 +71,7 @@ fi
 
 west build -s "$workspace/zmk/app" -d "$work_dir/build" -b xiao_ble/nrf52840/zmk -- \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    -DZMK_EXTRA_MODULES="/src;/src/tests/integration/firmware" \
+    -DZMK_EXTRA_MODULES="/src;/src/tests/integration/firmware;$companion" \
     -DSHIELD=matrix_test \
     "${cmake_args[@]}"
 
@@ -94,7 +89,7 @@ else
         "$work_dir/build/zephyr/.config"
     strings "$work_dir/build/zephyr/zmk.elf" >"$work_dir/build/zephyr/strings.txt"
     grep -Fxq amgskobo__matrix "$work_dir/build/zephyr/strings.txt"
-    for key in enabled flick_threshold long_press_ms suppress_abs; do
+    for key in enabled flick_threshold long_press_ms; do
         grep -Fxq "matrix.$key" "$work_dir/build/zephyr/strings.txt" || {
             echo "missing Studio setting: matrix.$key" >&2
             exit 1
@@ -109,11 +104,11 @@ else
 fi
 
 echo "$variant ZMK firmware fixture: PASS"
-ZMK_TEST_OUTPUT="$work_dir/kernel" bash /src/tests/kernel/run.sh "$workspace"
+ZMK_TEST_CUSTOM_SETTINGS=$([ "$variant" = dya ] && echo 1 || echo 0) ZMK_TEST_OUTPUT="$work_dir/kernel" bash /src/tests/kernel/run.sh "$workspace"
 producer_args=()
 if [ -n "${ZMK_TEST_IQS_ROOT:-}" ]; then
     producer_args+=(--iqs-root "$ZMK_TEST_IQS_ROOT")
 fi
 ZMK_TEST_CORE="$variant" python3 /src/tests/deep-scan/run.py "$workspace" \
-    "$work_dir/ownership" --regressions-only \
+    "$work_dir/ownership" \
     --core-revision "$(git -C "$workspace/zmk" rev-parse HEAD)" "${producer_args[@]}"

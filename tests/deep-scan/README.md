@@ -1,19 +1,24 @@
 # Matrix native ownership and IQS regressions
 
+Set ZMK_TEST_SUPPRESS_ROOT explicitly. All default/child routes use the same
+final instance and direct masks; it has no profile table or layer watcher.
+The source-local contact mask survives lift until a fresh distinct touch.
+Matrix runtime parameters cannot change that output policy.
+
 Run in the documented Linux build image with an explicitly resolved workspace
 and module environment. Both supported cores stay unchanged:
 
 ```sh
 ZMK_TEST_CORE=dya python3 tests/deep-scan/run.py /resolved/dya /fresh/dya \
-    --regressions-only --iqs-root /resolved/iqs
+    --iqs-root /resolved/iqs
 ZMK_TEST_CORE=upstream python3 tests/deep-scan/run.py /resolved/stock /fresh/stock \
-    --regressions-only --iqs-root /resolved/iqs
+    --iqs-root /resolved/iqs
 ```
 
-Each command builds once and runs **45 Matrix cases plus 17 IQS cases** three
-times with the same binary (62 cases). The combined integration entry accepts
+Each command builds once and runs **46 Matrix cases plus 17 IQS cases** three
+times with the same binary (63 cases). The combined integration entry accepts
 the producer path through `ZMK_TEST_IQS_ROOT`. `--iqs-only` selects the 17 IQS
-cases. Without `--iqs-root`, only the 45 Matrix cases run and stdout/selection.json
+cases. Without `--iqs-root`, only the 46 Matrix cases run and stdout/selection.json
 record IQS NOT RUN. The old six synthetic click cases and empty legacy route
 selector have been removed after source/failure archival and assertion mapping;
 their checks live in the corresponding actual-producer cases below.
@@ -33,7 +38,7 @@ No snapshot is accepted to clear a failure.
 
 The shared-cell contract is the union of admitted source claims: first owner
 presses, final owner releases, and a tap over an occupied cell adds no edge.
-The 45 cases cover two streams/processors, independent cells, actual keymap/HID
+The 46 cases cover two streams/processors, independent cells, actual keymap/HID
 state, reset/layer cleanup, callback reentry, a concurrent real-kernel producer,
 capacity-independent lifecycle behavior and a 300-step seeded walk.
 
@@ -51,8 +56,7 @@ without a mouse report. Repeated forwarded downs, independent mouse owners and
 frame endings retain their distinct assertions. Direct ON/ON/OFF is a generic
 input boundary, not normal IQS tap generation.
 
-Layer1 and the default fixture route select Matrix; layer2 is the empty pointer
-route. Unrelated layer3 tests virtual-key cleanup without route departure.
+Layer1 and the default fixture route select Matrix; layer2 is the pointer route containing only the shared final filter. Unrelated layer3 tests virtual-key cleanup without route departure.
 The required acceptance is release safety for balanced source ON/OFF pairs:
 all scheduled edges complete, final mouse/virtual-key state is released, and
 the next pointer click remains usable. Early release during a route transition
@@ -60,15 +64,10 @@ is permitted and logged; preserving exact click duration/source independence
 is an additional strict requirement. This is an intentional acceptance change,
 not a repair of the old early-release observations.
 
-The original BTN_0..BTN_15 release policy remains: an up passes unless this
-stream suppressed its down. The host `test_external_button_release` covers all16
+The shared final filter consumes unmatched ups and latches the first press
+disposition through its release across every route. The common-filter host fixtures cover all16
 codes, zero/negative ups and independent streams. BTN_TOUCH remains internal
 while active except for this stream's observed forwarded pair.
-
-Without `--regressions-only`, two explicitly named consumer pause/replacement
-observations also run. They assert replay/old-consumer flushing that KSCAN does
-not promise and expect their named assertion failure. They are separate from
-normal regressions, all of which require PASS.
 
 ## Actual IQS click producer
 
@@ -110,7 +109,7 @@ separate output-only run adds an assertion.
 
 ## Release safety, strict observations and negative controls
 
-The required selection has45 Matrix plus17 actual IQS cases (62 total), three
+The required selection has46 Matrix plus17 actual IQS cases (63 total), three
 identical-binary runs per core. `route-forwarded-pairs` uses complete ON/OFF
 pairs across route changes and checks release/recovery. The old ON/ON/OFF case
 is not a normal IQS sequence and remains executable in the strict selection.
@@ -122,24 +121,19 @@ To retain the former stricter assertions separately:
 
 ```sh
 ZMK_TEST_CORE=dya python3 tests/deep-scan/run.py /resolved/dya /fresh/strict \
-    --regressions-only --iqs-root /resolved/iqs --strict-clicks
+    --iqs-root /resolved/iqs --strict-clicks
 ```
 
 Repeat on stock. This selects only the five affected checks, avoiding another
 run of unrelated scenarios. It sets MATRIX_STRICT_CLICKS and requires PASS for
-every selected assertion. It currently FAILs: route-suppressed-release,
-route-touch-alias and iqs-overlap detect early release; route-forwarded-repeat
-detects a held button after synthetic ON/ON/OFF outside Matrix. The additional
-route-forwarded-pairs strict assertion detects a missed first click when returning
-to a runtime-disabled Matrix after its OFF bypassed the processor: the stale
-forwarded record treats the new ON as a repeat. That completed pair clears the
-record and the following fresh pair works; no final held state remains. This
-existing limitation was observed before and after the reset-only refactor.
-The command
-exits nonzero; these are not accepted negative-control failures. Source and raw
-failure evidence from the former acceptance were archived before revision.
-The current release-safety PASS does not establish strict source independence
-or tolerance of arbitrary repeated-ON input on routes which bypass Matrix.
+every selected assertion. Current direct-mask composition requires PASS in all
+five checks. Before extraction, the command failed early-release, repeated-ON
+and stale reentry assertions. Those original sources and three-repeat failures
+remain externally archived; they are not accepted negative controls. The final
+shared history now retains source claims across routes and rejects late paired
+presses. The touch-alias fixture explicitly checks that a delayed gesture tap
+stays silent until a new touch, then the first fresh click succeeds. Prior sources/failed traces are archived; the current delayed-tap and fresh-touch
+assertions remain in the required selection.
 
 Three genuine negative controls remain:
 

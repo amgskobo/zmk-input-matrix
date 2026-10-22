@@ -30,7 +30,6 @@ Processor properties are defined by
 - `long-press-ms`: delay before a Tap cell is held; zero disables holding.
 - `kscan`: virtual KSCAN output device.
 - `diamond-tap`: taps-only 1x4 diagonal partition.
-- `suppress-abs`: absolute-event suppression. Active Matrix consumes new KEY presses and their paired releases; tracked button releases whose presses were not suppressed pass.
 
 The KSCAN properties are defined by
 `dts/bindings/zmk,kscan-input-matrix.yaml`. Its dimensions must match the
@@ -48,8 +47,7 @@ interfaces used by downstream devicetrees and keymaps.
 
 - `enabled`;
 - `flick_threshold`;
-- `long_press_ms`;
-- `suppress_abs`.
+- `long_press_ms`.
 
 Structural properties (`rows`, `columns`, `x`, `y`, `kscan`, and
 `diamond-tap`) remain compile-time configuration. Changing them at runtime
@@ -107,12 +105,11 @@ contact state belongs to an input stream selected by
 - maximum flick travel and direction;
 - delayed hold work;
 - contact identifiers;
-- suppressed and forwarded button ownership;
 - applied reset generation.
 
 This split is mandatory. Multiple listeners, including a local pad and a
 split-proxied pad, may share one processor node. They must never overwrite each
-other's gesture, hold timer, or suppression record. Do not move stream fields
+other's gesture or hold timer. Do not move stream fields
 back into node-wide data and do not create one node per pad as a workaround.
 
 The stream array is sized from enabled input-listener instances. An invalid
@@ -131,21 +128,15 @@ never alias stream zero.
    direction at the farthest point, not the first threshold crossing.
 5. On release, report a held-cell release, a latched flick, or a tap. Clear all
    buffered contact state so a later touch cannot inherit stale coordinates.
-6. Suppression occurs only after the driver has consumed the event. Consume
-   new KEY presses while active. A BTN_0..BTN_15 release passes unless this
-   stream suppressed its press, including when the down occurred on a route
-   which bypassed Matrix. BTN_TOUCH remains internal while active, except for
-   a release paired with this stream's observed pre-activation forwarded down.
-   Track BTN_0..BTN_15 and BTN_TOUCH independently. Positive values are down;
-   zero/negative values end a press, matching the input listener's polarity.
-   A repeated forwarded down becomes a no-op INPUT_EV_MSC with the original
-   sync flag, so it neither increments the mouse owner count nor loses the
-   pending motion frame. Unknown codes have no slot and are consumed while active; they pass while inactive.
+6. Preserve every original KEY type/code/value/sync for the final filter. A
+   generation reset may neutralize stale coordinate payload while preserving
+   sync; it must never swallow an original button edge. Matrix owns generated
+   virtual keys, not source mouse-button disposition or pending HID frames.
 
-New KEY presses are consumed while Matrix is active. BTN_TOUCH is an
-internal contact signal; BTN_0 click events do not classify Tap. The removed
-runtime suppression switches have an explicit public README migration note;
-their old DT markers are deprecated and carry no run-time policy.
+Source-output policy belongs entirely to the final filter. Do not add a
+filter device reference, suppression setting or filter API call to Matrix.
+`enabled` controls gestures only. Composition fixtures configure the final
+route masks separately and assert that Matrix runtime edits cannot change them.
 
 ## Hold and reset races
 
@@ -164,8 +155,7 @@ do not replace it with an unlocked plain integer.
 An already claimed release for a reported hold must still be emitted exactly
 once, even when the rest of the event is discarded. Re-read the generation
 after dispatching that release: its callback can change settings or layers.
-A KEY release that would be forwarded must also survive that discard; a release
-paired with this stream's suppressed press remains consumed.
+Every original KEY edge must survive that discard; the final owner applies its latched disposition.
 
 A layer change and a runtime settings update both resync gesture state:
 
@@ -175,30 +165,19 @@ A layer change and a runtime settings update both resync gesture state:
 - increment the contact ID;
 - apply the current generation.
 
-Runtime edits retain the first-press button disposition until its release,
-including while gesture processing is disabled and across layer changes.
-Button/frame state must never be cleared by a contact reset. Place Matrix only
-in selected listener layer routes. The layer event subscription releases virtual
-keys without another input event; no Matrix prefix or internal layer selector
-is required. Input click/frame records cover observed events only. If Matrix
-is bypassed or an earlier processor consumes only one edge, it cannot observe
-the missing release. Release-safety acceptance uses complete source ON/OFF
-pairs, waits for every OFF and checks final release plus a fresh pointer click.
-Early cross-route release is permitted and logged. The original stricter
-duration/independence assertions and synthetic ON/ON/OFF robustness case remain
-executable through --strict-clicks and still fail with nonzero exit. They are
-additional requirements, not accepted failing normal tests. Preserve their raw
-evidence and distinguish them from required release-safety results. Do not infer
-a consumer lifecycle contract for source removal or callback replacement.
+Runtime/layer resets cancel gesture state and release generated claims. Source
+button histories and pending report boundaries belong to the independent final
+owner. Place the same final instance on every listener route. Matrix itself
+appears only on gesture routes and observes no bypassed source events. Its
+explicit companion integration tests assert complete source pairs, exact HID
+frames, repeat handling, overlap independence and first-click recovery. The
+stricter historical click checks remain executable and must be rerun after an
+extraction; do not mark old failure evidence resolved without those results.
 
-The shared contact-position reset helper is called only under the stream lock
-or before publishing initialization; it clears coordinates and flick history
-without touching buttons, pending frames, contact IDs or claim/work ownership.
-Contact reduction only updates contact state and returns effects; effect
-application dispatches KSCAN/work operations; button disposition and frame
-normalization have their own helpers and lifetimes. Pending forwarded frames
-survive all gesture resets. Consumed synchronized events use MSC_SCAN when
-a prior event awaits sync, while fully suppressed frames remain silent.
+Contact reduction updates contact state and returns effects; effect application
+dispatches KSCAN/work operations. Keep their release/cancellation assertions
+here. Transferred filter assertions and intentional unmatched-release/polarity
+changes are mapped in tests/README.md.
 
 KSCAN reporting and work cancellation/scheduling must remain outside stream
 spinlocks. Runtime parameter copies are protected by their own spinlock so the

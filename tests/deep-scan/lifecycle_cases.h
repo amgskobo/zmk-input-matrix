@@ -4,16 +4,16 @@
 static void lifecycle_case(const char *name) {
     __ASSERT_NO_MSG(device_is_ready(matrix) && device_is_ready(output));
     struct zip_matrix_runtime_params p=parameters();
-    p.enabled=true; p.long_press_ms=0; p.suppress_abs=false;
+    p.enabled=true; p.long_press_ms=0;
     apply(p);
     const struct device *source=DEVICE_DT_GET(DT_NODELABEL(matrix_source_left));
     const struct device *right=DEVICE_DT_GET(DT_NODELABEL(matrix_source_right));
     if (!strncmp(name,"route-",6)) {
         if (!strcmp(name,"route-suppressed-release") || !strcmp(name,"route-touch-alias")) {
-            p.enabled=false; apply(p);
+            p.enabled=false; apply(p); source_policy(false);
             __ASSERT_NO_MSG(input_report_key(right,INPUT_BTN_0,1,true,K_FOREVER)==0);
             k_msleep(5);
-            p.enabled=true; apply(p);
+            p.enabled=true; apply(p); source_policy(true);
             bool touch=!strcmp(name,"route-touch-alias");
             actual_input(touch?INPUT_BTN_TOUCH:INPUT_BTN_0,1);
             __ASSERT_NO_MSG(zmk_keymap_layer_deactivate(1,false)>=0);
@@ -25,6 +25,20 @@ static void lifecycle_case(const char *name) {
             __ASSERT_NO_MSG(input_report_key(right,INPUT_BTN_0,0,true,K_FOREVER)==0);
             k_msleep(5);
             __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
+            if(touch) {
+                /* This is still the suppressed gesture contact's delayed tap.
+                 * Leaving the route alone does not start a new contact. */
+                unsigned before=mouse_sends;
+                actual_input(INPUT_BTN_0,1); actual_input(INPUT_BTN_0,0);
+                __ASSERT_NO_MSG(mouse_sends==before &&
+                                !(zmk_hid_get_mouse_report()->body.buttons&1U));
+                /* A complete fresh pointer contact clears only its contact mask. */
+                actual_input(INPUT_BTN_TOUCH,1);
+                __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
+                actual_input(INPUT_BTN_TOUCH,0);
+                __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
+                printk("CONTACT RECOVERY delayed_pair=silent fresh_contact=complete\n");
+            }
             actual_input(INPUT_BTN_0,1);
             __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
             actual_input(INPUT_BTN_0,0);
@@ -32,7 +46,7 @@ static void lifecycle_case(const char *name) {
             printk("CLICK RECOVERY case=%s buttons=0 fresh_pair=complete\n",name);
             if(strict_clicks) __ASSERT(retained,"another source was released early");
         } else if (!strcmp(name,"route-forwarded-pairs")) {
-            p.enabled=false; apply(p);
+            p.enabled=false; apply(p); source_policy(false);
             actual_input(INPUT_BTN_0,1);
             __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
             __ASSERT_NO_MSG(zmk_keymap_layer_deactivate(1,false)>=0);
@@ -58,7 +72,7 @@ static void lifecycle_case(const char *name) {
             printk("CLICK RECOVERY case=%s buttons=0 fresh_pair=complete\n",name);
             if(strict_clicks) __ASSERT(reentry_forwarded,"first click after route reentry was lost");
         } else if (!strcmp(name,"route-forwarded-repeat")) {
-            p.enabled=false; apply(p);
+            p.enabled=false; apply(p); source_policy(false);
             actual_input(INPUT_BTN_0,1);
             __ASSERT_NO_MSG(zmk_keymap_layer_deactivate(1,false)>=0);
             __ASSERT_NO_MSG(zmk_keymap_layer_activate(2,false)>=0);
@@ -74,15 +88,15 @@ static void lifecycle_case(const char *name) {
             __ASSERT_NO_MSG(kscan_enable_callback(output)==0);
             p.long_press_ms=20; apply(p);
             contact(0,100); k_msleep(30);
-            __ASSERT_NO_MSG(count==1 && views[0][0]);
+            __ASSERT_NO_MSG(count==1 && views[0]);
             __ASSERT_NO_MSG(zmk_keymap_layer_deactivate(1,false)>=0);
             __ASSERT_NO_MSG(zmk_keymap_layer_activate(2,false)>=0);
             actual_input(INPUT_BTN_TOUCH,0); k_msleep(30);
-            __ASSERT_NO_MSG(count==2 && !views[0][0]);
+            __ASSERT_NO_MSG(count==2 && !views[0]);
             __ASSERT_NO_MSG(!(zmk_hid_get_mouse_report()->body.buttons&1U));
         }
     } else if (!strncmp(name,"frame-",6)) {
-        p.suppress_abs=true; apply(p);
+        apply(p);
         unsigned before=mouse_sends;
         if (!strcmp(name,"frame-empty-suppressed")) {
             actual_input(INPUT_BTN_TOUCH,1);
@@ -109,7 +123,7 @@ static void lifecycle_case(const char *name) {
         }
     } else if(!strcmp(name,"final-layer-repeat") || !strcmp(name,"final-layer-no-repeat-control") ||
        !strcmp(name,"final-no-layer-repeat-control")) {
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         actual_input(INPUT_BTN_0,1);
         if(strcmp(name,"final-no-layer-repeat-control")) {
             __ASSERT_NO_MSG(zmk_keymap_layer_activate(3,false)>=0);
@@ -119,11 +133,11 @@ static void lifecycle_case(const char *name) {
         __ASSERT(!(zmk_hid_get_mouse_report()->body.buttons&1U),
                  "layer change allows duplicate mouse owner and leaves button held");
     } else if(!strcmp(name,"final-layer-suppressed-other-owner")) {
-        p.enabled=false; apply(p);
+        p.enabled=false; apply(p); source_policy(false);
         __ASSERT_NO_MSG(input_report_key(right,INPUT_BTN_0,1,true,K_FOREVER)==0);
         k_msleep(5);
         __ASSERT_NO_MSG(zmk_hid_get_mouse_report()->body.buttons&1U);
-        p.enabled=true; apply(p);
+        p.enabled=true; apply(p); source_policy(true);
         actual_input(INPUT_BTN_0,1); /* This left press is consumed. */
         __ASSERT_NO_MSG(zmk_keymap_layer_activate(3,false)>=0);
         actual_input(INPUT_BTN_0,0);

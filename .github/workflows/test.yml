@@ -42,6 +42,20 @@ jobs:
         variant: [upstream, dya]
     steps:
       - uses: actions/checkout@v5
+      - name: Require an explicit published final-filter dependency
+        env:
+          SUPPRESS_REPOSITORY: ${{ vars.ZMK_SUPPRESS_REPOSITORY }}
+          SUPPRESS_REVISION: ${{ vars.ZMK_SUPPRESS_REVISION }}
+        run: |
+          test -n "$SUPPRESS_REPOSITORY" || { echo 'Set ZMK_SUPPRESS_REPOSITORY after publishing the separate module'; exit 2; }
+          [[ "$SUPPRESS_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'Set ZMK_SUPPRESS_REVISION to the reviewed full commit'; exit 2; }
+      - name: Check out the reviewed final filter
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.ZMK_SUPPRESS_REPOSITORY }}
+          ref: ${{ vars.ZMK_SUPPRESS_REVISION }}
+          path: .test-dependencies/suppress
+          persist-credentials: false
       - name: Check out the pinned IQS click producer
         uses: actions/checkout@v5
         with:
@@ -51,6 +65,7 @@ jobs:
           persist-credentials: false
       - name: Build firmware and exercise Matrix with the actual IQS producer
         env:
+          ZMK_TEST_SUPPRESS_ROOT: ${{ github.workspace }}/.test-dependencies/suppress
           ZMK_TEST_IQS_ROOT: ${{ github.workspace }}/.test-dependencies/iqs
           ZMK_TEST_REQUIRE_IQS: '1'
           ZMK_TEST_OUTPUT: ${{ runner.temp }}/matrix-results/${{ matrix.variant }}

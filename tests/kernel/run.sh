@@ -2,6 +2,7 @@
 # Copyright (c) 2026 amgskobo
 # SPDX-License-Identifier: MIT
 set -euo pipefail
+companion="${ZMK_TEST_SUPPRESS_ROOT:-}"
 if [ "$#" -ne 1 ]; then echo "pass exactly one resolved west workspace" >&2; exit 2; fi
 workspace="$(cd "${1:?pass an already resolved west workspace}" && pwd)"
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -10,12 +11,19 @@ if [ -e "$output" ] || [ -L "$output" ] || [ -e "$output.build.log" ] || [ -L "$
   echo "output already exists: $output" >&2
   exit 2
 fi
+if [ ! -f "$companion/src/input_processor_suppress.c" ]; then echo 'explicit suppression companion required' >&2; exit 2; fi
 cd "$workspace"
 mkdir -p "$(dirname "$output")"
+source "$repo/tests/integration/workspace-env.sh"
+zmk_test_select_workspace "$workspace"
 west zephyr-export
+cmake_args=()
+if [ "${ZMK_TEST_CUSTOM_SETTINGS:-0}" = 1 ]; then
+  cmake_args+=("-DEXTRA_CONF_FILE=$repo/tests/integration/custom-settings.conf")
+fi
 west build -p=always -o=-j2 -s "$workspace/zmk/app" -d "$output" \
   -b native_sim//zmk_test_mock -- -DZMK_CONFIG="$repo/tests/kernel/config" \
-  -DZMK_EXTRA_MODULES="$repo;$repo/tests/kernel/module" >"$output.build.log" 2>&1
+  -DZMK_EXTRA_MODULES="$repo;$repo/tests/kernel/module;$companion" "${cmake_args[@]}" >"$output.build.log" 2>&1
 for run in 1 2 3; do
   timeout 30 "$output/zephyr/zmk.exe" >"$output.run-$run.log" 2>&1
   grep -Fq 'matrix kernel boundary tests: PASS' "$output.run-$run.log"

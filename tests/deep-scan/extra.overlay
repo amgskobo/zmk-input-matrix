@@ -20,13 +20,17 @@
                                        &trans &trans &trans &trans &trans>; };
         unrelated_layer { bindings = <&trans &trans &trans &trans &trans
                                      &trans &trans &trans &trans &trans>; };
+        output_pass_layer { bindings = <&trans &trans &trans &trans &trans
+                                       &trans &trans &trans &trans &trans>; };
     };
 };
 &{/matrix_listener_left} {
-    pointer { layers = <2>; };
-    gestures { layers = <1>; input-processors = <&matrix>; };
+    pointer { layers = <2>; input-processors = <&final_filter 0>; };
+    output_pass { layers = <4>; input-processors = <&matrix>, <&final_filter SUPPRESS_ABS>; };
+    gestures { layers = <1>; input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>; };
 };
 &{/matrix_listener_right} {
-    pointer { layers = <2>; };
-    gestures { layers = <1>; input-processors = <&matrix>; };
+    pointer { layers = <2>; input-processors = <&final_filter 0>; };
+    output_pass { layers = <4>; input-processors = <&matrix>, <&final_filter SUPPRESS_ABS>; };
+    gestures { layers = <1>; input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>; };
 };
