@@ -17,3 +17,6 @@ Thumbs.db
 *~
 *.tmp
 *.bak
+
+# Separately pinned CI test dependencies
+.test-dependencies/

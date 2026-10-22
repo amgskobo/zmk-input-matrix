@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "host": [
+    "bash",
+    "tests/run-docker.sh"
+  ],
+  "contracts": [
+    {
+      "fixture": "tests/runtime/geometry_harness.c",
+      "asserts": "Grid/diamond geometry and boundary classification"
+    },
+    {
+      "fixture": "tests/runtime/driver_harness.c",
+      "asserts": "Contact geometry/gesture/hold/KSCAN effects, independent state, generation/reset races, unchanged source button edges/sync and independent gesture settings with no filter linkage"
+    },
+    {
+      "fixture": "tests/runtime/kscan_harness.c",
+      "asserts": "Virtual KSCAN output contract"
+    },
+    {
+      "fixture": "tests/runtime/custom_settings_harness.c",
+      "asserts": "Settings validation and reset"
+    }
+  ],
+  "kernel": [
+    "bash",
+    "tests/kernel/run.sh",
+    "<resolved-west-workspace>"
+  ],
+  "kernel_contracts": [
+    {
+      "fixture": "tests/kernel/module/main.c",
+      "asserts": "Nine real-workqueue groups: six retained hold/release/settings/layer cancellation groups plus three running-handler replacement/deadline groups; ordered KSCAN edges/timestamps, same binary three times/core. DYA adds two-node actual-registry foreign/peer isolation."
+    }
+  ],
+  "limits": "Named real-kernel hold and settings scenarios do not exhaust arbitrary interleavings or establish physical HID/split delivery.",
+  "execution": {
+    "default": "quick: every behavioral fixture and scenario under ASan/UBSan once",
+    "full": "ZMK_TEST_MODE=full: same scenarios plus optimized, coverage and existing 32-bit variants",
+    "integration": "owner native/DTS/API guards when interfaces or kernel contracts change; not a prerequisite for pure host behavior",
+    "transport": "actual ordered USB/BLE/split/power/reset evidence; archived simulation is not a passing substitute"
+  },
+  "infrastructure": {
+    "fixtures": [
+      {
+        "fixture": "tests/test_runtime_coverage.py",
+        "asserts": "Actual full runtime entry rejects empty, unrelated and partially measured coverage; normal full runs retain measured lines/branches for every real function"
+      },
+      {
+        "fixture": "tests/integration/test_offline.py",
+        "asserts": "Exact supported core/dependency pins, clean sources, missing inputs, nonoverlapping project paths separate from west/config metadata, fresh outputs outside source/dependency trees including aliases, parseable wrong-archive rejection; identity/digest bypass controls"
+      },
+      {
+        "fixture": "tests/integration/test_output_guard.py",
+        "asserts": "Existing directories, directory symlinks and dangling symlinks preserve prior evidence and invoke no west command"
+      },
+      {
+        "fixture": "tests/integration/test_docker_entry.py",
+        "asserts": "Read-only actual IQS checkout and required mode cross Docker; missing/invalid producer rejects before Docker/west, existing/symlink outputs preserve evidence and child failures propagate."
+      }
+    ],
+    "entry": "tests/integration/run.sh",
+    "preparation": "Explicit pinned offline workspace; local unchanged ZMK clone and original fixture manifest; no fetch or source repair",
+    "limits": "Admission tests control dependency responses. Actual native/API/firmware fixtures separately verify unchanged stock ZMK and DYA. Physical transport remains separate."
+  },
+  "ownership": {
+    "entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT",
+    "asserts": "46 real-kernel Matrix scenarios, three identical-binary runs each: output-wide claims, overlap, independent processors/streams, actual HID state, reset/layer/reentry/concurrent callbacks; composition through shared final suppression, repeats, negative values and touch aliases across retained/departed routes; pending-frame sync across KEY/ABS suppression and settings/layer resets. Fixtures: scan.c and lifecycle_cases.h.",
+    "host_capacity": "kscan_harness: atomic claim/queue refusal, reserved final releases, duplicate/orphan/invalid claims, disabled output, reentry and recovery; driver_harness: rejected hold/tap and successful subsequent hold; exact edge values/order with a 35-edge non-power-of-two FIFO through wraparound",
+    "observations": "All normal63 and strict5 cases expect PASS with direct masks. The strict selection retains duration/source independence, repeated-ON and first fresh reentry click assertions. Former failures remain archived; delayed gesture taps intentionally remain silent until the next distinct touch.",
+    "negative_control": "inactive-matrix.overlay removes Matrix and must fail matrix-key-isolation by name. iqs-inline-first calls the real producer inline and must fail both before-ON cases by name. Three repeats per core. Empty legacy selector removed after source/failure archival; its two assertions remain normal regressions. iqs-drop-release omits delivery of the actual OFF and must fail the final held-button assertion3/3.",
+    "iqs_producer": {
+      "entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS",
+      "asserts": "17 cases use unchanged complete IQS source: private-queue first ON,20ms source edges, double/triple, replacement, routes before/after ON, all OFF work, final release/recovery and ordered traces. Strict mode preserves exact overlap ownership/duration assertion.",
+      "selection": "46 Matrix +17 IQS =63. No explicit producer means IQS NOT RUN.",
+      "limits": "Gesture-to-click handoff; no full sensor frames/I2C/RDY/production abs2rel/PM retries/separate peripheral queues/split/physical host delivery."
+    },
+    "acceptance": "Balanced source ON/OFF pairs complete; final mouse buttons/virtual keys release and a fresh pointer click works. Early release across routes is permitted and logged.",
+    "strict_entry": "tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --strict-clicks",
+    "normal_route_sequence": "route-forwarded-pairs: complete ON/OFF pairs across route changes and recovery. Original route-forwarded-repeat preserved in strict selection.",
+    "consumer_handoff": "Unsupported replay/old-consumer flush observations retired after source and named3/core failure archival; not normal regressions or negative controls."
+  },
+  "efficiency": {
+    "entry": "tests/performance/run.py FRESH_OUTPUT --reference BEFORE_KSCAN_SOURCE",
+    "asserts": "Same canonical conformance before/current; identical callback/checksum results; source identities; raw alternating repeats, CPU and lock counts",
+    "limits": "Host stand-ins and 4-claim/8-edge fixture; no Cortex-M, real-lock, input-latency or power verdict"
+  },
+  "suppression_extraction": "Source buttons are transparent; independent final filter owns pair/repeat/pending-frame policy. Current map and retired-contract boundaries: tests/README.md.",
+  "scheduled_work_settings_review": "The driver fixture injects replacement before the hold handler's stream lock, with disabled, changed and unchanged long-press settings, and checks the new contact's deadline. The kernel fixture pauses a real running handler at the same unlocked boundary: six retained groups plus three replacement groups, one binary three times/core. DYA additionally enables the actual settings registry and holds two processor nodes: a foreign edit changes neither hold; editing the peer releases only its own claim. The two-node host adapter retains every range/read/reset case and tests every descriptor, foreign events and initialization. Equal public API setter calls still reset their own node; notification dispatch is the isolation boundary. The guarded hold hook is enabled only by the owner kernel fixture.",
+  "concurrent_settings": "Concurrent notifications are serialized across the complete settings read/apply transaction. The DYA kernel fixture wraps the real registry read to pause writer A after its snapshot, commits writer B on another Zephyr thread, then resumes A. Live values must finish at the registry's latest values. The same before-fix binary fails three times; the fixed DYA fixture runs three times. The wrapper exists only in the owner fixture; production has no settings test hook."
+}

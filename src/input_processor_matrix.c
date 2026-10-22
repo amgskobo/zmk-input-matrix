@@ -11,7 +11,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/input/input.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/spinlock.h>
@@ -21,10 +20,7 @@
 #include <zmk/events/layer_state_changed.h>
 #include <zmk-input-matrix/matrix_runtime.h>
 
-LOG_MODULE_REGISTER(zip_matrix, CONFIG_ZMK_LOG_LEVEL);
-
 #define COORD_UNINITIALIZED UINT16_MAX
-#define COORD_INVALID_ZERO  0xFFF
 #define ZIP_MATRIX_INIT_PRIORITY UTIL_INC(CONFIG_KSCAN_INIT_PRIORITY)
 #define ZIP_MATRIX_GESTURE_COUNT 5U
 #define ZIP_MATRIX_MAX_GRID_ROWS (UINT8_MAX / ZIP_MATRIX_GESTURE_COUNT)
@@ -51,47 +47,38 @@ struct zip_matrix_config {
     uint16_t y;
     uint16_t flick_threshold;
     uint16_t long_press_ms;
-    bool suppress_abs;
-    bool suppress_btn_touch;
-    bool suppress_key;
 #if ZIP_MATRIX_USE_DIAMOND_TAP
     bool diamond_tap;
 #endif
     const struct device *kscan_dev;
 };
 
-struct zip_matrix_data;
+/* Contact and generated-key lifecycle stay here; source output policy is downstream. */
+struct zip_matrix_contact {
+    uint16_t current_x, current_y;
+    uint16_t start_x, start_y;
+    bool is_btn_touch;
+    bool is_holding, hold_reported, hold_release_pending;
+    bool flick_latched;
+    uint8_t flick_gesture;
+    uint64_t flick_max_travel;
+    uint32_t contact_id, hold_contact_id;
+    int64_t hold_due_ms; /* deadline of this contact; zero means no armed hold */
+};
 
+struct zip_matrix_effects {
+    bool cancel_hold, schedule_hold;
+    bool release_hold, report_gesture;
+    uint8_t gesture_row, gesture_column;
+};
+
+struct zip_matrix_data;
 struct zip_matrix_stream {
     struct k_spinlock lock;
+    struct zmk_kscan_matrix_claim hold_claim;
     struct zip_matrix_data *owner;
-    uint16_t current_x;
-    uint16_t current_y;
-    bool is_btn_touch;
-    uint16_t start_x;
-    uint16_t start_y;
-    const struct device *kscan_dev;
     struct k_work_delayable hold_work;
-    bool is_holding;
-    bool hold_reported;
-    bool hold_release_pending;
-    bool flick_latched;
-    enum gesture_type flick_gesture;
-    /*
-     * Squared travel of the farthest point reached so far, so the direction can
-     * be re-read from the longest vector instead of the short one that happened
-     * to cross the threshold first.
-     */
-    uint64_t flick_max_travel;
-    uint8_t hold_row;
-    uint8_t hold_column;
-    uint32_t contact_id;
-    uint32_t hold_contact_id;
-    /*
-     * One bit per INPUT_BTN_0..INPUT_BTN_15 whose press was suppressed here
-     * and whose release has not been seen yet.
-     */
-    uint16_t suppressed_btns;
+    struct zip_matrix_contact contact;
     atomic_t applied_generation;
 };
 
@@ -121,62 +108,7 @@ zip_matrix_live_config(const struct zip_matrix_data *data,
 
     config.flick_threshold = params->flick_threshold;
     config.long_press_ms = params->long_press_ms;
-    config.suppress_abs = params->suppress_abs;
-    config.suppress_btn_touch = params->suppress_btn_touch;
-    config.suppress_key = params->suppress_key;
     return config;
-}
-
-#define ZIP_MATRIX_TRACKED_BTNS 16
-
-/*
- * Decide whether a KEY event may be consumed.
- *
- * Suppression has to stay paired. Which processors run is decided per event
- * from the layer active at that moment, so a button press and its release can
- * be routed differently when the layer changes in between. Dropping a release
- * whose press was never suppressed here leaves that button held down on the
- * host with nothing left to release it, so a release is only dropped when it
- * matches a press that was dropped here.
- *
- * Passing a release through is always safe: it cannot produce a stray press,
- * because the press it belongs to was already delivered.
- *
- * The record is dropped on a layer change rather than expiring on a timer. That
- * change is the only moment a press and its release can be routed apart, so it
- * is exactly when an outstanding record can be orphaned.
- *
- * BTN_TOUCH is excluded - this processor keeps its own touch state and consumes
- * both edges unconditionally.
- */
-static bool zip_matrix_may_suppress_key(struct zip_matrix_stream *stream,
-                                        const struct input_event *event)
-{
-    if (event->code == INPUT_BTN_TOUCH ||
-        event->code < INPUT_BTN_0 ||
-        event->code >= INPUT_BTN_0 + ZIP_MATRIX_TRACKED_BTNS) {
-        return true;
-    }
-
-    uint16_t bit = BIT(event->code - INPUT_BTN_0);
-    k_spinlock_key_t key = k_spin_lock(&stream->lock);
-    bool was_suppressed = (stream->suppressed_btns & bit) != 0;
-
-    if (event->value) {
-        stream->suppressed_btns |= bit;
-    } else {
-        stream->suppressed_btns &= ~bit;
-    }
-    k_spin_unlock(&stream->lock, key);
-
-    if (!event->value && !was_suppressed) {
-        /* A route change between the press and its release, which is routine. */
-        LOG_DBG("Passing BTN_%d release: its press was not suppressed here",
-                event->code - INPUT_BTN_0);
-        return false;
-    }
-
-    return true;
 }
 
 static uint16_t clamp_coord_value(int32_t value, uint16_t max)
@@ -323,81 +255,95 @@ static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, i
     return (dx < 0) ? GESTURE_LEFT : GESTURE_RIGHT;
 }
 
+/* Caller owns the stream lock, or is initializing an unpublished stream.
+ * Contact history only: button disposition and pending frames outlive resets.
+ */
+static void zip_matrix_clear_position(struct zip_matrix_contact *contact)
+{
+    contact->current_x = COORD_UNINITIALIZED;
+    contact->current_y = COORD_UNINITIALIZED;
+    contact->start_x = COORD_UNINITIALIZED;
+    contact->start_y = COORD_UNINITIALIZED;
+    contact->flick_latched = false;
+    contact->flick_gesture = GESTURE_TAP;
+    contact->flick_max_travel = 0U;
+    contact->hold_due_ms = 0;
+}
+
 /*
- * Press the hold, then work out whether it has to be released again.
- *
- * The press is reported between the two critical sections, and the state left
- * behind is only consistent if nothing else runs in that gap. That holds
- * because this work runs on the system workqueue, which is cooperative -
- * CONFIG_SYSTEM_WORKQUEUE_PRIORITY is negative - while the input thread that
- * calls handle_event is preemptible, and the report itself only queues a
- * message and never yields. Were the workqueue made preemptible, a touch
- * ending inside that gap would take the release path while hold_reported was
- * still clear, and the press just reported would be left with nothing to
- * release it.
+ * Admit the hold without a stream lock, then reconcile its contact generation.
+ * A callback may reenter settings/contact handling, or another thread may end
+ * the contact before admission returns. Pending release and contact identity
+ * discharge that admitted claim exactly once. The output proxy serializes
+ * callbacks independently; no cooperative scheduling assumption pairs edges.
  */
 static void hold_work_handler(struct k_work *work)
 {
     struct zip_matrix_stream *stream =
         CONTAINER_OF(work, struct zip_matrix_stream, hold_work.work);
     struct zip_matrix_data *data = stream->owner;
+    atomic_val_t generation = atomic_get(&data->reset_generation);
     struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(data);
     struct zip_matrix_config config = zip_matrix_live_config(data, &params);
+#ifdef ZIP_MATRIX_TEST_HOLD_HOOK
+    /* Owner native fixture controls this unlocked scheduling boundary. */
+    extern void zip_matrix_test_hold_snapshot(void);
+    zip_matrix_test_hold_snapshot();
+#endif
     k_spinlock_key_t key = k_spin_lock(&stream->lock);
     bool trigger = false;
     uint8_t r = 0;
     uint8_t c = 0;
     uint32_t work_contact_id = 0;
 
-    if (params.enabled && stream->is_btn_touch && !stream->is_holding && !stream->flick_latched &&
-        stream->start_x != COORD_UNINITIALIZED) {
-        calculate_kscan_coordinates(&config, stream->start_x, stream->start_y, GESTURE_TAP,
-                                    &stream->hold_row, &stream->hold_column);
-        stream->is_holding = true;
-        stream->hold_reported = false;
-        stream->hold_release_pending = false;
-        stream->hold_contact_id = stream->contact_id;
-        r = stream->hold_row;
-        c = stream->hold_column;
-        work_contact_id = stream->hold_contact_id;
+    if (generation == atomic_get(&data->reset_generation) &&
+        generation == atomic_get(&stream->applied_generation) &&
+        params.enabled && params.long_press_ms > 0 &&
+        stream->contact.is_btn_touch && !stream->contact.is_holding && !stream->contact.flick_latched &&
+        stream->contact.start_x != COORD_UNINITIALIZED &&
+        k_uptime_get() >= stream->contact.hold_due_ms) {
+        calculate_kscan_coordinates(&config, stream->contact.start_x, stream->contact.start_y, GESTURE_TAP,
+                                    &r, &c);
+        stream->contact.is_holding = true;
+        stream->contact.hold_reported = false;
+        stream->contact.hold_release_pending = false;
+        stream->contact.hold_contact_id = stream->contact.contact_id;
+        work_contact_id = stream->contact.hold_contact_id;
         trigger = true;
     }
 
     k_spin_unlock(&stream->lock, key);
 
     if (trigger) {
-        zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, true);
+        bool admitted = zmk_kscan_matrix_acquire(data->kscan_dev, &stream->hold_claim, r, c) == 0;
         k_spinlock_key_t k2 = k_spin_lock(&stream->lock);
-        bool same_hold = stream->is_holding && stream->hold_contact_id == work_contact_id;
-        bool same_contact = stream->contact_id == work_contact_id;
+        bool same_hold = stream->contact.is_holding && stream->contact.hold_contact_id == work_contact_id;
+        bool same_contact = stream->contact.contact_id == work_contact_id;
         bool release_after_press = !same_hold;
 
         if (same_hold) {
-            stream->hold_reported = true;
-            release_after_press =
-                stream->hold_release_pending || !stream->is_btn_touch || !same_contact;
+            stream->contact.hold_reported = admitted;
+            release_after_press = !admitted ||
+                !same_contact || stream->contact.hold_release_pending || !stream->contact.is_btn_touch;
         }
 
         if (same_hold && release_after_press) {
-            stream->is_holding = false;
-            stream->hold_reported = false;
-            stream->hold_release_pending = false;
+            stream->contact.is_holding = false;
+            stream->contact.hold_reported = false;
+            stream->contact.hold_release_pending = false;
             if (same_contact) {
-                stream->start_x = COORD_UNINITIALIZED;
-                stream->start_y = COORD_UNINITIALIZED;
-                stream->flick_latched = false;
-                stream->flick_gesture = GESTURE_TAP;
-                stream->flick_max_travel = 0U;
-                if (!stream->is_btn_touch) {
-                    stream->current_x = COORD_UNINITIALIZED;
-                    stream->current_y = COORD_UNINITIALIZED;
-                }
+                /*
+                 * Still the contact that was held, so it has ended: a release
+                 * is pending only once the touch is off, and a new touch would
+                 * have changed the contact. Forget where it was.
+                 */
+                zip_matrix_clear_position(&stream->contact);
             }
         }
         k_spin_unlock(&stream->lock, k2);
 
-        if (release_after_press) {
-            zmk_kscan_matrix_report_event(data->kscan_dev, (uint32_t)r, (uint32_t)c, false);
+        if (admitted && release_after_press) {
+            (void)zmk_kscan_matrix_release(data->kscan_dev, &stream->hold_claim);
         }
     }
 }
@@ -421,123 +367,71 @@ static void zip_matrix_resync_stream(struct zip_matrix_data *data,
                                      atomic_val_t generation)
 {
     k_spinlock_key_t key = k_spin_lock(&stream->lock);
-    bool release = stream->is_holding && stream->hold_reported;
-    uint8_t row = stream->hold_row;
-    uint8_t column = stream->hold_column;
+    bool release = stream->contact.is_holding && stream->contact.hold_reported;
 
-    stream->is_holding = false;
-    stream->hold_reported = false;
-    stream->hold_release_pending = false;
-    stream->is_btn_touch = false;
-    stream->current_x = COORD_UNINITIALIZED;
-    stream->current_y = COORD_UNINITIALIZED;
-    stream->start_x = COORD_UNINITIALIZED;
-    stream->start_y = COORD_UNINITIALIZED;
-    stream->flick_latched = false;
-    stream->flick_gesture = GESTURE_TAP;
-    stream->flick_max_travel = 0U;
-    stream->suppressed_btns = 0U;
-    stream->contact_id++;
+    stream->contact.is_holding = false;
+    stream->contact.hold_reported = false;
+    stream->contact.hold_release_pending = false;
+    stream->contact.is_btn_touch = false;
+    zip_matrix_clear_position(&stream->contact);
+    stream->contact.contact_id++;
     atomic_set(&stream->applied_generation, generation);
     k_spin_unlock(&stream->lock, key);
 
     (void)k_work_cancel_delayable(&stream->hold_work);
     if (release) {
-        zmk_kscan_matrix_report_event(data->kscan_dev, row, column, false);
+        (void)zmk_kscan_matrix_release(data->kscan_dev, &stream->hold_claim);
     }
 }
 
-static int zip_matrix_handle_event(const struct device *dev, struct input_event *event,
-                                   uint32_t p1, uint32_t p2, struct zmk_input_processor_state *state)
+/* Consume only contact state here. Do not rewrite events or dispatch output. */
+static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
+                                      const struct zip_matrix_config *cfg,
+                                      const struct input_event *event,
+                                      struct zip_matrix_effects *effects)
 {
-    struct zip_matrix_data *owner = dev->data;
-    struct zip_matrix_stream *data = stream_for_event(owner, state);
-
-    if (data == NULL) {
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-
-    atomic_val_t generation_before = atomic_get(&owner->reset_generation);
-
-    if (atomic_get(&data->applied_generation) != generation_before) {
-        zip_matrix_resync_stream(owner, data, generation_before);
-    }
-
-    struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(owner);
-    struct zip_matrix_config live_config = zip_matrix_live_config(owner, &params);
-    const struct zip_matrix_config *cfg = &live_config;
-    int ret = ZMK_INPUT_PROC_CONTINUE;
     bool is_sync = event->sync;
-    bool cancel_hold = false;
-    bool schedule_hold = false;
-    bool release_stale_hold = false;
-    bool report_release = false;
-    bool report_gesture = false;
-    uint8_t release_row = 0;
-    uint8_t release_column = 0;
-    uint8_t gesture_row = 0;
-    uint8_t gesture_column = 0;
-
-    ARG_UNUSED(p1);
-    ARG_UNUSED(p2);
-
-    if (!params.enabled) {
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-
     switch (event->type) {
     case INPUT_EV_ABS:
         if (event->code == INPUT_ABS_X || event->code == INPUT_ABS_Y) {
             k_spinlock_key_t key = k_spin_lock(&data->lock);
             if (event->code == INPUT_ABS_X) {
-                data->current_x = clamp_coord_value(event->value, cfg->x);
+                data->contact.current_x = clamp_coord_value(event->value, cfg->x);
             } else {
-                data->current_y = clamp_coord_value(event->value, cfg->y);
+                data->contact.current_y = clamp_coord_value(event->value, cfg->y);
             }
             k_spin_unlock(&data->lock, key);
-        }
-        if (cfg->suppress_abs) {
-            event->code = COORD_INVALID_ZERO;
-            event->sync = false;
-            ret = ZMK_INPUT_PROC_STOP;
         }
         break;
     case INPUT_EV_KEY:
         if (event->code == INPUT_BTN_TOUCH) {
-            bool on = (bool)event->value;
+            bool on = event->value > 0;
             k_spinlock_key_t key = k_spin_lock(&data->lock);
-            bool was_touch = data->is_btn_touch;
+            bool was_touch = data->contact.is_btn_touch;
 
             if (on && !was_touch) {
-                cancel_hold = true;
-                release_stale_hold = data->is_holding && data->hold_reported;
-                release_row = data->hold_row;
-                release_column = data->hold_column;
-                if (data->is_holding && !data->hold_reported) {
-                    data->hold_release_pending = true;
+                effects->cancel_hold = true;
+                effects->release_hold = data->contact.is_holding && data->contact.hold_reported;
+                if (data->contact.is_holding && !data->contact.hold_reported) {
+                    data->contact.hold_release_pending = true;
                 } else {
-                    data->is_holding = false;
-                    data->hold_reported = false;
-                    data->hold_release_pending = false;
+                    data->contact.is_holding = false;
+                    data->contact.hold_reported = false;
+                    data->contact.hold_release_pending = false;
                 }
-                data->contact_id++;
-                data->is_btn_touch = true;
-                data->flick_latched = false;
-                data->flick_gesture = GESTURE_TAP;
-                data->flick_max_travel = 0U;
-                data->start_x = COORD_UNINITIALIZED;
-                data->start_y = COORD_UNINITIALIZED;
+                data->contact.contact_id++;
+                data->contact.is_btn_touch = true;
+                data->contact.flick_latched = false;
+                data->contact.flick_gesture = GESTURE_TAP;
+                data->contact.flick_max_travel = 0U;
+                data->contact.start_x = COORD_UNINITIALIZED;
+                data->contact.start_y = COORD_UNINITIALIZED;
+                data->contact.hold_due_ms = 0;
             } else if (!on && was_touch) {
-                data->is_btn_touch = false;
+                data->contact.is_btn_touch = false;
             }
 
             k_spin_unlock(&data->lock, key);
-        }
-        if ((cfg->suppress_key || (cfg->suppress_btn_touch && event->code == INPUT_BTN_TOUCH)) &&
-            zip_matrix_may_suppress_key(data, event)) {
-            event->code = COORD_INVALID_ZERO;
-            event->sync = false;
-            ret = ZMK_INPUT_PROC_STOP;
         }
         break;
     }
@@ -545,15 +439,17 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
     if (is_sync) {
         k_spinlock_key_t key = k_spin_lock(&data->lock);
 
-        if (data->is_btn_touch) {
-            if (data->start_x == COORD_UNINITIALIZED && data->current_x != COORD_UNINITIALIZED && data->current_y != COORD_UNINITIALIZED) {
-                data->start_x = data->current_x;
-                data->start_y = data->current_y;
-                schedule_hold = cfg->long_press_ms > 0;
-            } else if (flick_enabled(cfg) && data->start_x != COORD_UNINITIALIZED &&
-                       !(data->is_holding && data->hold_contact_id == data->contact_id)) {
-                int32_t dx = (int32_t)data->current_x - (int32_t)data->start_x;
-                int32_t dy = (int32_t)data->current_y - (int32_t)data->start_y;
+        if (data->contact.is_btn_touch) {
+            if (data->contact.start_x == COORD_UNINITIALIZED && data->contact.current_x != COORD_UNINITIALIZED && data->contact.current_y != COORD_UNINITIALIZED) {
+                data->contact.start_x = data->contact.current_x;
+                data->contact.start_y = data->contact.current_y;
+                effects->schedule_hold = cfg->long_press_ms > 0;
+                data->contact.hold_due_ms = effects->schedule_hold ?
+                    k_uptime_get() + cfg->long_press_ms : 0;
+            } else if (flick_enabled(cfg) && data->contact.start_x != COORD_UNINITIALIZED &&
+                       !(data->contact.is_holding && data->contact.hold_contact_id == data->contact.contact_id)) {
+                int32_t dx = (int32_t)data->contact.current_x - (int32_t)data->contact.start_x;
+                int32_t dy = (int32_t)data->contact.current_y - (int32_t)data->contact.start_y;
                 uint64_t travel = travel_squared(dx, dy);
 
                 /*
@@ -564,94 +460,127 @@ static int zip_matrix_handle_event(const struct device *dev, struct input_event 
                  * itself still fires once, to drop the pending hold.
                  */
                 if (travel >= flick_threshold_squared(cfg) &&
-                    travel > data->flick_max_travel) {
-                    cancel_hold = !data->flick_latched;
-                    data->flick_latched = true;
-                    data->flick_max_travel = travel;
-                    data->flick_gesture = get_gesture_type(cfg, dx, dy);
+                    travel > data->contact.flick_max_travel) {
+                    effects->cancel_hold = !data->contact.flick_latched;
+                    data->contact.flick_latched = true;
+                    data->contact.flick_max_travel = travel;
+                    data->contact.flick_gesture = get_gesture_type(cfg, dx, dy);
                 }
             }
-        } else if (data->start_x != COORD_UNINITIALIZED) {
-            cancel_hold = true;
-            bool held = data->is_holding && data->hold_contact_id == data->contact_id;
-            bool stale_hold = data->is_holding && data->hold_contact_id != data->contact_id;
-            bool hold_reported = held && data->hold_reported;
-            bool flick_latched = data->flick_latched;
-            enum gesture_type gesture = data->flick_gesture;
-            uint8_t r = data->hold_row;
-            uint8_t c = data->hold_column;
-            uint16_t sx = data->start_x, sy = data->start_y, cx = data->current_x, cy = data->current_y;
+        } else if (data->contact.start_x != COORD_UNINITIALIZED) {
+            effects->cancel_hold = true;
+            bool held = data->contact.is_holding && data->contact.hold_contact_id == data->contact.contact_id;
+            bool stale_hold = data->contact.is_holding && data->contact.hold_contact_id != data->contact.contact_id;
+            bool hold_reported = held && data->contact.hold_reported;
+            bool flick_latched = data->contact.flick_latched;
+            enum gesture_type gesture = data->contact.flick_gesture;
+            uint16_t sx = data->contact.start_x, sy = data->contact.start_y, cx = data->contact.current_x, cy = data->contact.current_y;
 
-            data->start_x = COORD_UNINITIALIZED;
-            data->start_y = COORD_UNINITIALIZED;
-            data->current_x = COORD_UNINITIALIZED;
-            data->current_y = COORD_UNINITIALIZED;
-            data->flick_latched = false;
-            data->flick_gesture = GESTURE_TAP;
-            data->flick_max_travel = 0U;
+            zip_matrix_clear_position(&data->contact);
 
             if (held && !hold_reported) {
-                data->hold_release_pending = true;
+                data->contact.hold_release_pending = true;
             } else if (held || !stale_hold) {
-                data->is_holding = false;
-                data->hold_reported = false;
-                data->hold_release_pending = false;
+                data->contact.is_holding = false;
+                data->contact.hold_reported = false;
+                data->contact.hold_release_pending = false;
             }
             k_spin_unlock(&data->lock, key);
 
             if (held && hold_reported) {
-                release_row = r;
-                release_column = c;
-                report_release = true;
+                effects->release_hold = true;
             } else if (!held) {
                 if (!flick_latched) {
                     gesture = get_gesture_type(cfg, (int32_t)cx - (int32_t)sx, (int32_t)cy - (int32_t)sy);
                 }
 
-                calculate_kscan_coordinates(cfg, sx, sy, gesture, &gesture_row, &gesture_column);
-                report_gesture = true;
+                calculate_kscan_coordinates(cfg, sx, sy, gesture, &effects->gesture_row, &effects->gesture_column);
+                effects->report_gesture = true;
             }
 
-            goto report_events;
-        } else if (data->current_x != COORD_UNINITIALIZED || data->current_y != COORD_UNINITIALIZED) {
-            data->current_x = COORD_UNINITIALIZED;
-            data->current_y = COORD_UNINITIALIZED;
+            return;
+        } else if (data->contact.current_x != COORD_UNINITIALIZED || data->contact.current_y != COORD_UNINITIALIZED) {
+            data->contact.current_x = COORD_UNINITIALIZED;
+            data->contact.current_y = COORD_UNINITIALIZED;
         }
 
         k_spin_unlock(&data->lock, key);
     }
 
-report_events:
-    ;
+}
+
+/* Claimed releases outlive reset generations. Other effects require the
+ * original generation, and run outside stream locks for callback reentry. */
+static bool zip_matrix_apply_effects(struct zip_matrix_data *owner,
+                                     struct zip_matrix_stream *data,
+                                     const struct zip_matrix_config *cfg,
+                                     const struct zip_matrix_effects *effects,
+                                     atomic_val_t generation_before)
+{
+    if (effects->release_hold) {
+        (void)zmk_kscan_matrix_release(owner->kscan_dev, &data->hold_claim);
+    }
+    /* A release callback may change settings or layers before returning. */
     atomic_val_t generation_after = atomic_get(&owner->reset_generation);
     if (generation_after != generation_before) {
         zip_matrix_resync_stream(owner, data, generation_after);
-        event->code = COORD_INVALID_ZERO;
-        event->sync = false;
-        return ZMK_INPUT_PROC_STOP;
+        return false;
     }
-
-    if (cancel_hold) {
-        k_work_cancel_delayable(&data->hold_work);
+    if (effects->cancel_hold) {
+        (void)k_work_cancel_delayable(&data->hold_work);
     }
-
-    if (schedule_hold) {
-        k_work_reschedule(&data->hold_work, K_MSEC(cfg->long_press_ms));
+    if (effects->schedule_hold) {
+        (void)k_work_reschedule(&data->hold_work, K_MSEC(cfg->long_press_ms));
     }
-
-    if (release_stale_hold || report_release) {
-        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)release_row, (uint32_t)release_column,
-                                      false);
+    if (effects->report_gesture) {
+        struct zmk_kscan_matrix_claim tap = {0};
+        if (zmk_kscan_matrix_acquire(owner->kscan_dev, &tap,
+                                    effects->gesture_row, effects->gesture_column) == 0) {
+            (void)zmk_kscan_matrix_release(owner->kscan_dev, &tap);
+        }
     }
+    return true;
+}
 
-    if (report_gesture) {
-        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
-                                      true);
-        zmk_kscan_matrix_report_event(owner->kscan_dev, (uint32_t)gesture_row, (uint32_t)gesture_column,
-                                      false);
+/* Layer events own contact cancellation; input events only consume the
+ * current activation state and preserve click pairs and report boundaries. */
+static int zip_matrix_process_event(const struct device *dev, struct input_event *event,
+                                    struct zmk_input_processor_state *state)
+{
+    struct zip_matrix_data *owner = dev->data;
+    struct zip_matrix_stream *data = stream_for_event(owner, state);
+    if (data == NULL) { return ZMK_INPUT_PROC_CONTINUE; }
+    atomic_val_t generation = atomic_get(&owner->reset_generation);
+    if (atomic_get(&data->applied_generation) != generation) {
+        zip_matrix_resync_stream(owner, data, generation);
     }
+    struct zip_matrix_runtime_params params = zip_matrix_params_snapshot(owner);
+    struct zip_matrix_config cfg = zip_matrix_live_config(owner, &params);
+    bool valid = true;
+    if (params.enabled) {
+        struct zip_matrix_effects effects = {0};
+        zip_matrix_reduce_contact(data, &cfg, event, &effects);
+        valid = zip_matrix_apply_effects(owner, data, &cfg, &effects, generation);
+    }
+    atomic_val_t after = atomic_get(&owner->reset_generation);
+    if (after != generation) {
+        zip_matrix_resync_stream(owner, data, after);
+        valid = false;
+    }
+    /* Gesture generation fences affect only gesture effects. Original source
+     * buttons, including presses/repeats and releases, reach the final owner. */
+    if (!valid && event->type != INPUT_EV_KEY) {
+        event->type = INPUT_EV_MSC; event->code = INPUT_MSC_SCAN; event->value = 0;
+    }
+    return ZMK_INPUT_PROC_CONTINUE;
+}
 
-    return ret;
+static int zip_matrix_handle_event(const struct device *dev, struct input_event *event,
+                                   uint32_t p1, uint32_t p2, struct zmk_input_processor_state *state)
+{
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    return zip_matrix_process_event(dev, event, state);
 }
 
 static int zip_matrix_init(const struct device *dev)
@@ -667,9 +596,6 @@ static int zip_matrix_init(const struct device *dev)
         .enabled = true,
         .flick_threshold = cfg->flick_threshold,
         .long_press_ms = cfg->long_press_ms,
-        .suppress_abs = cfg->suppress_abs,
-        .suppress_btn_touch = cfg->suppress_btn_touch,
-        .suppress_key = cfg->suppress_key,
     };
     atomic_set(&data->reset_generation, 0);
 
@@ -677,20 +603,13 @@ static int zip_matrix_init(const struct device *dev)
         struct zip_matrix_stream *stream = &data->streams[i];
 
         stream->owner = data;
-        stream->current_x = COORD_UNINITIALIZED;
-        stream->current_y = COORD_UNINITIALIZED;
-        stream->start_x = COORD_UNINITIALIZED;
-        stream->start_y = COORD_UNINITIALIZED;
-        stream->is_btn_touch = false;
-        stream->is_holding = false;
-        stream->hold_reported = false;
-        stream->hold_release_pending = false;
-        stream->flick_latched = false;
-        stream->flick_gesture = GESTURE_TAP;
-        stream->flick_max_travel = 0U;
-        stream->contact_id = 0;
-        stream->hold_contact_id = 0;
-        stream->suppressed_btns = 0;
+        zip_matrix_clear_position(&stream->contact);
+        stream->contact.is_btn_touch = false;
+        stream->contact.is_holding = false;
+        stream->contact.hold_reported = false;
+        stream->contact.hold_release_pending = false;
+        stream->contact.contact_id = 0;
+        stream->contact.hold_contact_id = 0;
         atomic_set(&stream->applied_generation, 0);
         k_work_init_delayable(&stream->hold_work, hold_work_handler);
     }
@@ -757,8 +676,6 @@ static const struct zmk_input_processor_driver_api zip_matrix_driver_api = { .ha
         .rows = DT_INST_PROP(n, rows), .columns = DT_INST_PROP(n, columns), \
         .x = DT_INST_PROP(n, x), .y = DT_INST_PROP(n, y), \
         .flick_threshold = DT_INST_PROP(n, flick_threshold), .long_press_ms = DT_INST_PROP(n, long_press_ms), \
-        .suppress_abs = DT_INST_PROP(n, suppress_abs), .suppress_btn_touch = DT_INST_PROP(n, suppress_btn_touch), \
-        .suppress_key = DT_INST_PROP(n, suppress_key), \
         ZIP_MATRIX_DIAMOND_TAP_FIELD(n) \
         .kscan_dev = DEVICE_DT_GET(DT_INST_PHANDLE(n, kscan)), \
     }; \
@@ -808,9 +725,8 @@ int zip_matrix_set_params(const struct device *dev,
     struct zip_matrix_data *data = dev->data;
     k_spinlock_key_t key = k_spin_lock(&data->params_lock);
     data->params = *params;
-    k_spin_unlock(&data->params_lock, key);
-
     atomic_val_t generation = atomic_inc(&data->reset_generation) + 1;
+    k_spin_unlock(&data->params_lock, key);
     for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
         zip_matrix_resync_stream(data, &data->streams[i], generation);
     }
@@ -837,7 +753,8 @@ static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
     atomic_val_t generation = atomic_inc(&owner->reset_generation) + 1;
 
     for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
-        zip_matrix_resync_stream(owner, &owner->streams[i], generation);
+        struct zip_matrix_stream *stream = &owner->streams[i];
+        zip_matrix_resync_stream(owner, stream, generation);
     }
 }
 

@@ -26,24 +26,62 @@ upstream ZMK の `main` と DYA fork の `main+dya` の両方で継続的に
 
 1つのプロセッサ node を複数の ZMK input listener で共有できます。設定と出力先
 KSCAN device は node に属しますが、接触座標、flick 判定、hold work、contact
-generation、抑制済みボタン記録は `input_device_index` ごとに独立します。そのため、
+generation は `input_device_index` ごとに独立します。そのため、
 local と split 経由の pad が進行中の gesture 状態を上書きすることはなく、左右専用の
 matrix processor node を複製する必要もありません。不正な listener index は変換せず
 通過し、stream 0 へ alias しません。
 
 遅延 long-press handler が行うのは、上限のあるメモリ内状態更新と KSCAN report だけです。
-sleep、動的確保、settings 走査、flash 書き込みは行いません。hold press の報告とその状態更新の
-間へ touch release が割り込まないことを保証するため、Zephyr の協調 system work queue を
-意図的に使用します。
+sleep、動的確保、settings 走査、flash 書き込みは行いません。保持の受け付け中に
+接触終了や設定変更が入った場合も、接触世代と解除待ち状態で対応付けます。
+
+## 同じセルを共有する入力
+
+複数の入力元が同じ仮想セルを保持する場合、最初の入力で押下し、最後の
+入力が離れたときに解除します。別のプロセッサーノードからの入力も対象です。
+保持中のセルへのタップは追加の押下・解除を発生させず、保持を継続します。
+異なるセルは独立して処理します。
+
+出力ごとの上限は同時保持16件、待機中・解除予約のイベント32件です。
+必要に応じて `CONFIG_ZMK_INPUT_MATRIX_MAX_CLAIMS` と
+`CONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE` を調整してください。
+上限で新規入力を受け付けられない場合も、受け付け済み入力の解除枠は保持します。
+コールバックの停止・交換には、保持状態の再通知や以前の受信側の解除保証はありません。
+
+## 共通最終段とのセット構成
+
+Matrix は元のボタンと sync を変更せず後段へ渡します。入力元ごとのボタン履歴、
+繰り返し押下、抑止した対の解放、フレーム境界は、別の `zmk-input-suppress` が所有します。
+すべての pointer / scroll / gesture 経路の末尾に同じインスタンスを配置します。
+Matrix は仮想キーが必要なレイヤー経路だけで呼びます。
+
+```dts
+#include <zmk-input-suppress/input_processor_suppress.dtsi>
+&trackpad_listener {
+    input-processors = <&zip_absolute_to_relative>,
+                       <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
+    gestures {
+        layers = <1>;
+        input-processors = <&zip_matrix>, <&input_suppress SUPPRESS_ALL>;
+    };
+};
+```
+
+標準includeが共通抑止器を定義します。各経路の引数に抑止マスクを直接渡し、
+プロファイル表やレイヤー監視の設定は不要です。詳細は
+[README.md](README.md#gesture-layer-routes-and-final-policy) を参照してください。
+レイヤー変更による仮想キーの解放と遅延 hold の中止は Matrix に残します。
+抑止した押下の解放は経路変更後も抑止し、通した押下の解放は一度だけ通します。
 
 ## ランタイム設定
 
 `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y` を有効にすると、DYA Studio の
 `amgskobo__matrix` に各インスタンスが表示されます。変更できる値は `enabled`、
-`flick_threshold`、`long_press_ms`、`suppress_abs`、`suppress_btn_touch`、
-`suppress_key` です。永続化は custom-settings registry だけが担当します。
+`flick_threshold`、`long_press_ms` です。永続化は custom-settings registry だけが担当します。
 設定更新時は全 listener stream を無効化し、報告済み hold を解放、保留中の work を
-キャンセルします。更新と重なった入力イベントは新旧設定を混在させず破棄します。
+キャンセルします。更新と重なった古い座標は新旧設定を混在させず中立化します。元のボタンは通過します。
+Matrixは最終抑止モジュールを参照しません。`enabled` はジェスチャーだけを制御し、
+マウスボタンの抑止方針は経路末尾のmaskで独立して設定します。
 
 `rows`、`columns`、`kscan`、`diamond-tap` は virtual matrix と keymap の構造を
 決めるため、devicetree 固定です。
@@ -52,6 +90,15 @@ sleep、動的確保、settings 走査、flash 書き込みは行いません。
 短いnode名を使用してください。RPCキーと保存時の完全な名前はコンパイル時に検査される
 ため、保存できない設定を一度受理して後から失うのではなく、該当する構成のビルドを
 明示的に停止します。
+
+### 旧設定からの移行
+
+sourceボタンと保留中フレームの記録、抑止設定は共通最終段へ移しました。
+Matrixノードから `suppressor`、`suppression-profile`、`suppress-abs`、旧抑止マーカーを
+削除し、経路末尾の引数にmaskを直接渡します。runtimeの `suppress_abs` も廃止します。
+旧保存値は無視し、消去や自動書き換えは行いません。ジェスチャー無効化でクリックを
+許可する連動は廃止し、必要な出力方針は最終段で明示します。
+[検証の移行対応表](tests/README.md) を参照してください。
 
 ## インストール
 
@@ -157,11 +204,12 @@ devicetreeの固定設定だけで使用する場合、このオプションは�
 - このインスタンスが既に押下したセルは解放されます。
 - 保留中のホールドはキャンセルされます。そうしないと、レイヤが変わった後にタイマーが発火し、誰も解放できないセルを押してしまいます。
 - 接触自体も終了扱いにします。開始点と一緒に、タッチ状態とバッファ済み座標も破棄します。接触が有効なまま開始点だけ消えた状態は、SYN 処理が「ストロークの開始」と読む形そのものなので、そのままでは開始点を latch し直し、キャンセルしたばかりのホールドを予約し直してしまいます。
-- 抑制済みの押下の記録は破棄されます。そうしないと、後から届いた無関係な release が代わりに飲み込まれます。
+- source ボタンと保留中フレームは共通最終段が経路をまたいで保持します。
 
 このイベントは**すべてのレイヤ変更**で発火します。このプロセッサがチェーンに残る変更（パッドに指を置いたままキーボード側のレイヤキーに触った場合など）でも同じです。いずれにせよ進行中の接触は破棄され、指を上げて置き直すまでこのインスタンスは反応しません。
 
-`suppress-key` は、**ここで抑制していない押下に対応する release は決して破棄しません**。release を通すことは常に安全です（対応する押下は既にホストへ届いている）が、破棄するとそのボタンが押しっぱなしのまま解放手段を失います。
+元のボタンは接触判定後にそのまま通します。共通最終段が押下時の方針を適用し、
+Matrix は生成した仮想キーの解放と hold 中止を所有します。
 
 ### 3. キーマップ設定
 
@@ -228,7 +276,7 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 };
 ```
 
-詳しくは [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) を参照してください。
+詳しくは [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) を参照してください。
 
 ## 設定リファレンス
 
@@ -241,9 +289,6 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 | `flick-threshold` | int | 必須 | フリック成立に必要な、開始点からの最小移動量 |
 | `kscan` | phandle | 必須 | ジェスチャイベントを受け取る `zmk,kscan-input-matrix` プロキシ |
 | `long-press-ms` | int | 200 | Tap ホールド時間（ミリ秒）、0 で無効化 |
-| `suppress-abs` | bool | false | X/Y だけでなく、すべての `INPUT_EV_ABS` イベントを抑制 |
-| `suppress-btn-touch` | bool | 付属の `zip_matrix` node では true | `INPUT_BTN_TOUCH` のみ抑制。独自nodeではプロパティを追加すると有効になり、省略したDevicetree booleanはfalseになります。 |
-| `suppress-key` | bool | false | タッチパッド由来のボタンイベントも含め、すべての `INPUT_EV_KEY` イベントを抑制 |
 | `diamond-tap` | bool | false | Tap のみを報告し、1×4 グリッドを D-pad 風のダイヤモンド領域に分割 |
 
 各プロパティの範囲はビルド時に検査されます。`rows`: 1–51、`columns`: 1–255、`x`/`y`: 1–65534、`flick-threshold`: 1–65535、`long-press-ms`: 0–65535。
@@ -285,15 +330,21 @@ python -m keymap_drawer.physical_layout_to_dt --cols-thumbs-notation "333+2 2+33
 ## テスト
 
 ```sh
-python3 tests/geometry/run.py
+python3 tests/runtime/run.py        # または: bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
-geometry テストは driver の座標・gesture 関数そのものを最適化版と ASan/UBSan 版で
-実行し、grid の端、diamond の領域、斜め flick の閾値、大きな移動距離と小さな
-パネルの全座標を確認します。gcov が出す行・分岐カバレッジは抽出した geometry
-テストの値であり、driver 全体の値ではありません。
+runtime テストは driver の関数そのものを `tests/runtime/` のスタブ付きハーネスに取り出します。
+通常実行は全ケースをASan/UBSanで確認し、`ZMK_TEST_MODE=full` では最適化版とgcov版も実行します。geometry ハーネスは grid の端、diamond の領域、
+斜め flick の閾値、大きな移動距離と小さなパネルの全座標を確認します。driver ハーネスは
+event handler に接触を流し、tap、最遠点を追う flick、長押し、hold を押している間に届く
+接触や設定変更、元のキーイベントの透過、listener ごとの stream、レイヤ変更での解放を再現します。
+さらに仮想KSCANプロキシと設定ヘルパーのハーネスがあります。fullモードのCIは取り出した各関数
+(座標、driver と layer listener、プロキシ、設定ブリッジ)の行・分岐100%を要求します。
+保存された設定をドライバ呼び出しに変える適用処理もマクロごと取り出し、ソースに
+ゲートのない関数が1つでもあれば runner が失敗します。devicetree からの
+インスタンス生成そのものは下記のファームウェアfixtureで確認します。
 
 各variantで、2つのinput listenerが1つのmatrix nodeを共有するファームウェアfixtureをビルドし、
 processorと仮想KSCANプロキシが有効になっていることを確認します。`upstream` はZMK `main` で
@@ -301,6 +352,23 @@ processorと仮想KSCANプロキシが有効になっていることを確認し
 forkでビルドして `amgskobo__matrix` subsystemと全設定キーがファームウェアにリンクされて
 いることを確認します。GitHub Actions は pull request、`main` への push、週次実行で両方を確認します。
 
+通常ZMKとDYAの統合検査では、実カーネルの9ケースとMatrixの46ケースを、
+それぞれ同じバイナリで3回実行します。両系統のCIは固定したIQS実装を必須とし、
+実IQS入力の17ケースを加えた計63ケースを実行します。ホストの通常実行は全ケースをASan/UBSanで確認し、
+`ZMK_TEST_MODE=full` では最適化版と全行・全分岐の検査も行います。
+準備済み依存環境での実行方法と、実機確認が別途必要な範囲は
+[テストガイド](tests/README.md)を参照してください。
+
 ## ライセンス
 
 MIT ライセンス。詳細は [LICENSE](LICENSE) を参照してください。
+
+
+長押しは接触ごとの期限に従います。古い接触の処理が実行中でも、新しい接触を
+期限より早く長押しにせず、長押しを無効にした後にも押下を出しません。
+起動時は全ノードの保存値を適用し、個別の設定変更はその設定を持つノードだけへ
+適用します。別ノードの接触や保持中の仮想キーを解除しません。
+
+並行する設定通知は、読み取りから適用までを直列化します。古いスナップショットが
+後から新しい編集を上書きすることを防ぎます。追加のロックは設定通知だけで使い、
+通常の入力処理経路では使いません。

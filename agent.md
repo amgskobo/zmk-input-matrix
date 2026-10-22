@@ -7,7 +7,7 @@ coverage, and release checks.
 
 ## Scope
 
-The module contains two devices:
+The module contains two device types:
 
 - `zmk,input-processor-matrix` consumes absolute X/Y and touch events and
   classifies a contact as Tap, Flick Up, Flick Down, Flick Left, or Flick Right.
@@ -30,7 +30,6 @@ Processor properties are defined by
 - `long-press-ms`: delay before a Tap cell is held; zero disables holding.
 - `kscan`: virtual KSCAN output device.
 - `diamond-tap`: taps-only 1x4 diagonal partition.
-- `suppress-abs`, `suppress-btn-touch`, `suppress-key`: input suppression.
 
 The KSCAN properties are defined by
 `dts/bindings/zmk,kscan-input-matrix.yaml`. Its dimensions must match the
@@ -48,10 +47,7 @@ interfaces used by downstream devicetrees and keymaps.
 
 - `enabled`;
 - `flick_threshold`;
-- `long_press_ms`;
-- `suppress_abs`;
-- `suppress_btn_touch`;
-- `suppress_key`.
+- `long_press_ms`.
 
 Structural properties (`rows`, `columns`, `x`, `y`, `kscan`, and
 `diamond-tap`) remain compile-time configuration. Changing them at runtime
@@ -91,7 +87,16 @@ a diagonal prefers the vertical axis; the exact center maps to Down.
 
 ## State ownership
 
-Configuration and the output KSCAN device belong to the processor node. All
+Configuration and the output KSCAN device belong to the processor node.
+The virtual output owns the union of active source claims across all processor
+nodes. Only its first owner emits press and only its final owner emits release.
+A tap overlapping an occupied cell emits no extra edge. The source claim must
+outlive acquisition and release; a rejected acquisition must never be released.
+Claims and pending edges have explicit Kconfig bounds. Admission is atomic and
+reserves the eventual final release; capacity failure cannot strand an accepted
+owner. A single drainer preserves edge order across concurrent/reentrant calls,
+with callbacks outside locks. Raw report_event remains an unaggregated legacy
+API; never mix raw and ownership APIs on one cell. All
 contact state belongs to an input stream selected by
 `zmk_input_processor_state.input_device_index`:
 
@@ -100,12 +105,11 @@ contact state belongs to an input stream selected by
 - maximum flick travel and direction;
 - delayed hold work;
 - contact identifiers;
-- suppressed-button records;
 - applied reset generation.
 
 This split is mandatory. Multiple listeners, including a local pad and a
 split-proxied pad, may share one processor node. They must never overwrite each
-other's gesture, hold timer, or suppression record. Do not move stream fields
+other's gesture or hold timer. Do not move stream fields
 back into node-wide data and do not create one node per pad as a workaround.
 
 The stream array is sized from enabled input-listener instances. An invalid
@@ -124,12 +128,15 @@ never alias stream zero.
    direction at the farthest point, not the first threshold crossing.
 5. On release, report a held-cell release, a latched flick, or a tap. Clear all
    buffered contact state so a later touch cannot inherit stale coordinates.
-6. Suppression occurs only after the driver has consumed the event. Never drop
-   a button release unless this same stream suppressed its matching press.
+6. Preserve every original KEY type/code/value/sync for the final filter. A
+   generation reset may neutralize stale coordinate payload while preserving
+   sync; it must never swallow an original button edge. Matrix owns generated
+   virtual keys, not source mouse-button disposition or pending HID frames.
 
-`suppress-btn-touch` consumes only `INPUT_BTN_TOUCH`. `suppress-key` consumes
-all key events. `suppress-abs` consumes all absolute events. Preserve these
-distinct meanings.
+Source-output policy belongs entirely to the final filter. Do not add a
+filter device reference, suppression setting or filter API call to Matrix.
+`enabled` controls gestures only. Composition fixtures configure the final
+route masks separately and assert that Matrix runtime edits cannot change them.
 
 ## Hold and reset races
 
@@ -145,13 +152,32 @@ output. If it changed, the event is discarded and the stream is resynchronized
 instead of mixing old and new settings. `applied_generation` is atomic too;
 do not replace it with an unlocked plain integer.
 
-A layer change and a runtime settings update both resync all streams:
+An already claimed release for a reported hold must still be emitted exactly
+once, even when the rest of the event is discarded. Re-read the generation
+after dispatching that release: its callback can change settings or layers.
+Every original KEY edge must survive that discard; the final owner applies its latched disposition.
+
+A layer change and a runtime settings update both resync gesture state:
 
 - release any reported hold;
 - cancel pending delayed work;
-- clear touch, coordinates, start, flick, and suppression state;
+- clear touch, coordinates, start and flick state;
 - increment the contact ID;
 - apply the current generation.
+
+Runtime/layer resets cancel gesture state and release generated claims. Source
+button histories and pending report boundaries belong to the independent final
+owner. Place the same final instance on every listener route. Matrix itself
+appears only on gesture routes and observes no bypassed source events. Its
+explicit companion integration tests assert complete source pairs, exact HID
+frames, repeat handling, overlap independence and first-click recovery. The
+stricter historical click checks remain executable and must be rerun after an
+extraction; do not mark old failure evidence resolved without those results.
+
+Contact reduction updates contact state and returns effects; effect application
+dispatches KSCAN/work operations. Keep their release/cancellation assertions
+here. Transferred filter assertions and intentional unmatched-release/polarity
+changes are mapped in tests/README.md.
 
 KSCAN reporting and work cancellation/scheduling must remain outside stream
 spinlocks. Runtime parameter copies are protected by their own spinlock so the
@@ -168,6 +194,18 @@ fixed-width integer arithmetic, spinlocks, and atomic loads, but must not:
 - scan settings descriptors;
 - perform logging in the normal successful path;
 - put KSCAN reporting inside a spinlock.
+
+Keep queue callback/coordinate words separate from the edge-polarity array;
+this avoids padding one bool per edge without narrowing public coordinates or
+reducing capacity. Acquire/release transfer their already-held output lock to
+the drainer, which always returns unlocked. No nested lock acquisition or
+callback under that lock is allowed. An empty/already-draining queue only
+unlocks and returns. Preserve the final-release reservation and FIFO ordering.
+
+The optional owner CPU comparison in `tests/README.md` measures the same host
+fixtures before/current; it does not establish real kernel, Cortex-M, input
+latency or power performance. Report every scenario, including regressions or
+inconclusive differences, plus the real production linker footprint.
 
 Runtime settings are re-read only when a settings event occurs. The custom
 settings listener may scan the small instance set because it is not in the

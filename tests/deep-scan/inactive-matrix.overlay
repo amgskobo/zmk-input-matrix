@@ -1,0 +1,4 @@
+/* SPDX-License-Identifier: MIT */
+/* Omit Matrix on the gesture layer: isolation must fail. */
+&{/matrix_listener_left/gestures} { /delete-property/ input-processors; };
+&{/matrix_listener_right/gestures} { /delete-property/ input-processors; };
