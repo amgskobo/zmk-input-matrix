@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <zmk-input-matrix/matrix_runtime.h>
+#include "matrix_timeout.h"
 
 typedef long atomic_t;
 typedef long atomic_val_t;
@@ -29,6 +30,8 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 /* Unevaluated printf() keeps the format strings checked and the arguments used. */
 #define LOG_DBG(fmt, ...) ((void)sizeof(printf(fmt, ##__VA_ARGS__)))
 #define K_MSEC(ms) ((k_timeout_t){(ms)})
+#define K_TICKS(ticks) ((k_timeout_t){(ticks)})
+#define CONFIG_SYS_CLOCK_TICKS_PER_SEC 1000
 #define INPUT_EV_MSC 0x04
 #define INPUT_MSC_SCAN 0x04
 #define INPUT_EV_KEY 0x01
@@ -82,7 +85,7 @@ static atomic_val_t atomic_inc(atomic_t *value) { return (*value)++; }
 static void (*before_stream_lock)(void);
 static int lock_countdown;
 static int64_t now_ms;
-static __attribute__((unused)) int64_t k_uptime_get(void) { return now_ms; }
+static uint32_t k_uptime_get_32(void) { return (uint32_t)now_ms; }
 static k_spinlock_key_t k_spin_lock(struct k_spinlock *lock) {
     if(lock_countdown>0 && --lock_countdown==0) {
         void (*hook)(void)=before_stream_lock; before_stream_lock=NULL; hook();
@@ -889,6 +892,39 @@ static void test_stale_hold_replacement(void) {
     puts("matrix stale running hold: disabled/replaced/same-settings deadline PASS");
 }
 
+static void test_wide_travel_and_clock_wrap(void) {
+    struct zip_matrix_runtime_params p = params_of(true, 50, 10);
+    assert(zip_matrix_set_params(&matrix, &p) == 0);
+    config.diamond_tap = false;
+    config.x = config.y = 65534U;
+    report_count = 0;
+    press();
+    frame(0, 0);
+    frame(65534, 65534);
+    assert(stream(0)->contact.flick_max_travel_carry);
+    uint32_t farthest = stream(0)->contact.flick_max_travel;
+    frame(65534, 65000);
+    assert(stream(0)->contact.flick_max_travel == farthest);
+    frame(100, 100);
+    assert(stream(0)->contact.flick_max_travel == farthest);
+    lift();
+    assert(!stream(0)->contact.flick_max_travel_carry);
+    now_ms = UINT32_MAX - 9U;
+    press();
+    frame(100, 100);
+    assert(stream(0)->contact.hold_armed && stream(0)->contact.hold_due_ms == 0U);
+    stream(0)->contact.hold_armed = false;
+    stream(0)->hold_work.work.handler(&stream(0)->hold_work.work);
+    assert(!stream(0)->contact.is_holding);
+    stream(0)->contact.hold_armed = true;
+    now_ms = UINT32_MAX;
+    stream(0)->hold_work.work.handler(&stream(0)->hold_work.work);
+    assert(!stream(0)->contact.is_holding);
+    run_hold(0);
+    assert(stream(0)->contact.is_holding);
+    lift();
+}
+
 int main(void) {
     config = (struct zip_matrix_config){.rows = 3, .columns = 3, .x = 900, .y = 900,
                                         .flick_threshold = 100, .long_press_ms = 300,
@@ -915,6 +951,7 @@ int main(void) {
     test_activation_and_frames();
     test_release_callback_reset();
     test_stale_hold_replacement();
+    test_wide_travel_and_clock_wrap();
 
     for (size_t i = 0; i < ZIP_MATRIX_STREAM_COUNT; i++) {
         assert(!stream(i)->lock.held);

@@ -10,6 +10,7 @@
 #include <drivers/input_processor.h>
 #include <zmk/keymap.h>
 #include <zmk-input-matrix/matrix_runtime.h>
+#include "../../../src/matrix_timeout.h"
 #if IS_ENABLED(CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS)
 #include <cormoran/zmk/custom_settings.h>
 #include <zmk-input-matrix/custom_settings.h>
@@ -185,7 +186,23 @@ static void test_registry_peer_hold(void) {
 }
 #endif
 
+static void verify_timeout_conversion(void) {
+    static const uint32_t rates[] = {1, 100, 1000, 32768, 65536, 65537, UINT32_MAX};
+    for (unsigned h = 0; h < ARRAY_SIZE(rates); ++h) {
+        const uint32_t hz = rates[h];
+        for (uint32_t ms = 0; ms <= UINT16_MAX; ++ms) {
+            const uint64_t wide = z_tmcvt_64(ms, 1000U, hz, true, true, false);
+            const uint32_t narrow = z_tmcvt_32(ms, 1000U, hz, true, true, false);
+            const k_ticks_t ticks = zip_matrix_timeout_ticks((uint16_t)ms, hz);
+            __ASSERT_NO_MSG(ticks == (k_ticks_t)(IS_ENABLED(CONFIG_TIMEOUT_64BIT) ?
+                                               wide : narrow));
+            __ASSERT_NO_MSG((uint32_t)ticks == narrow);
+        }
+    }
+}
+
 static void tests(void *a, void *b, void *c) {
+    verify_timeout_conversion();
     ARG_UNUSED(a);
     ARG_UNUSED(b);
     ARG_UNUSED(c);

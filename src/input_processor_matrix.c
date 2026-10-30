@@ -19,6 +19,7 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/layer_state_changed.h>
 #include <zmk-input-matrix/matrix_runtime.h>
+#include "matrix_timeout.h"
 
 #define COORD_UNINITIALIZED UINT16_MAX
 #define ZIP_MATRIX_INIT_PRIORITY UTIL_INC(CONFIG_KSCAN_INIT_PRIORITY)
@@ -61,9 +62,11 @@ struct zip_matrix_contact {
     bool is_holding, hold_reported, hold_release_pending;
     bool flick_latched;
     uint8_t flick_gesture;
-    uint64_t flick_max_travel;
+    uint32_t flick_max_travel;
+    bool flick_max_travel_carry;
     uint32_t contact_id, hold_contact_id;
-    int64_t hold_due_ms; /* deadline of this contact; zero means no armed hold */
+    uint32_t hold_due_ms; /* modulo-32-bit deadline; hold_armed distinguishes zero */
+    bool hold_armed;
 };
 
 struct zip_matrix_effects {
@@ -141,10 +144,10 @@ static uint8_t calculate_diamond_column(const struct zip_matrix_config *cfg,
      */
     int32_t dx = ((int32_t)px * 2) - (int32_t)cfg->x;
     int32_t dy = ((int32_t)py * 2) - (int32_t)cfg->y;
-    uint64_t abs_dx = (uint64_t)(dx < 0 ? -dx : dx);
-    uint64_t abs_dy = (uint64_t)(dy < 0 ? -dy : dy);
-    uint64_t horizontal = abs_dx * cfg->y;
-    uint64_t vertical = abs_dy * cfg->x;
+    uint32_t abs_dx = (uint32_t)(dx < 0 ? -dx : dx);
+    uint32_t abs_dy = (uint32_t)(dy < 0 ? -dy : dy);
+    uint32_t horizontal = abs_dx * cfg->y;
+    uint32_t vertical = abs_dy * cfg->x;
 
     if (vertical >= horizontal) {
         return (dy < 0) ? 0U : 2U;
@@ -189,22 +192,23 @@ static void calculate_kscan_coordinates(const struct zip_matrix_config *cfg,
     *out_column = grid_column;
 }
 
-/*
- * Squared travel distance, widened before multiplying. A resolution may be set
- * as high as ZIP_MATRIX_MAX_COORD, and squaring a delta that large overflows 32
- * bits well before the sum is formed.
- */
-static uint64_t travel_squared(int32_t dx, int32_t dy)
+/* Coordinates are clamped to uint16_t before contact reduction. Each square
+ * fits uint32_t; their sum needs one carry bit. Keep that bit explicitly so
+ * farthest-point ordering remains exact at the largest supported resolution. */
+static uint32_t travel_squared(int32_t dx, int32_t dy, bool *carry)
 {
-    uint64_t adx = (uint64_t)(dx < 0 ? -(int64_t)dx : (int64_t)dx);
-    uint64_t ady = (uint64_t)(dy < 0 ? -(int64_t)dy : (int64_t)dy);
-
-    return (adx * adx) + (ady * ady);
+    uint32_t adx = dx < 0 ? 0U - (uint32_t)dx : (uint32_t)dx;
+    uint32_t ady = dy < 0 ? 0U - (uint32_t)dy : (uint32_t)dy;
+    uint32_t xx = adx * adx;
+    uint32_t yy = ady * ady;
+    uint32_t sum = xx + yy;
+    *carry = sum < xx;
+    return sum;
 }
 
-static uint64_t flick_threshold_squared(const struct zip_matrix_config *cfg)
+static uint32_t flick_threshold_squared(const struct zip_matrix_config *cfg)
 {
-    return (uint64_t)cfg->flick_threshold * (uint64_t)cfg->flick_threshold;
+    return (uint32_t)cfg->flick_threshold * cfg->flick_threshold;
 }
 
 /*
@@ -226,8 +230,8 @@ static bool flick_enabled(const struct zip_matrix_config *cfg)
 
 static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, int32_t dx, int32_t dy)
 {
-    uint64_t adx = (uint64_t)(dx < 0 ? -(int64_t)dx : (int64_t)dx);
-    uint64_t ady = (uint64_t)(dy < 0 ? -(int64_t)dy : (int64_t)dy);
+    uint32_t adx = dx < 0 ? 0U - (uint32_t)dx : (uint32_t)dx;
+    uint32_t ady = dy < 0 ? 0U - (uint32_t)dy : (uint32_t)dy;
 
     if (!flick_enabled(cfg)) {
         return GESTURE_TAP;
@@ -238,7 +242,9 @@ static enum gesture_type get_gesture_type(const struct zip_matrix_config *cfg, i
      * separately describes a square, so a diagonal travel had to be sqrt(2)
      * longer than an axis-aligned one before it counted as a flick.
      */
-    if (travel_squared(dx, dy) < flick_threshold_squared(cfg)) {
+    bool carry;
+    uint32_t travel = travel_squared(dx, dy, &carry);
+    if (!carry && travel < flick_threshold_squared(cfg)) {
         return GESTURE_TAP;
     }
 
@@ -267,7 +273,9 @@ static void zip_matrix_clear_position(struct zip_matrix_contact *contact)
     contact->flick_latched = false;
     contact->flick_gesture = GESTURE_TAP;
     contact->flick_max_travel = 0U;
+    contact->flick_max_travel_carry = false;
     contact->hold_due_ms = 0;
+    contact->hold_armed = false;
 }
 
 /*
@@ -301,7 +309,8 @@ static void hold_work_handler(struct k_work *work)
         params.enabled && params.long_press_ms > 0 &&
         stream->contact.is_btn_touch && !stream->contact.is_holding && !stream->contact.flick_latched &&
         stream->contact.start_x != COORD_UNINITIALIZED &&
-        k_uptime_get() >= stream->contact.hold_due_ms) {
+        stream->contact.hold_armed &&
+        (uint32_t)(k_uptime_get_32() - stream->contact.hold_due_ms) < 0x80000000U) {
         calculate_kscan_coordinates(&config, stream->contact.start_x, stream->contact.start_y, GESTURE_TAP,
                                     &r, &c);
         stream->contact.is_holding = true;
@@ -424,9 +433,11 @@ static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
                 data->contact.flick_latched = false;
                 data->contact.flick_gesture = GESTURE_TAP;
                 data->contact.flick_max_travel = 0U;
+                data->contact.flick_max_travel_carry = false;
                 data->contact.start_x = COORD_UNINITIALIZED;
                 data->contact.start_y = COORD_UNINITIALIZED;
                 data->contact.hold_due_ms = 0;
+                data->contact.hold_armed = false;
             } else if (!on && was_touch) {
                 data->contact.is_btn_touch = false;
             }
@@ -445,12 +456,14 @@ static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
                 data->contact.start_y = data->contact.current_y;
                 effects->schedule_hold = cfg->long_press_ms > 0;
                 data->contact.hold_due_ms = effects->schedule_hold ?
-                    k_uptime_get() + cfg->long_press_ms : 0;
+                    k_uptime_get_32() + cfg->long_press_ms : 0;
+                data->contact.hold_armed = effects->schedule_hold;
             } else if (flick_enabled(cfg) && data->contact.start_x != COORD_UNINITIALIZED &&
                        !(data->contact.is_holding && data->contact.hold_contact_id == data->contact.contact_id)) {
                 int32_t dx = (int32_t)data->contact.current_x - (int32_t)data->contact.start_x;
                 int32_t dy = (int32_t)data->contact.current_y - (int32_t)data->contact.start_y;
-                uint64_t travel = travel_squared(dx, dy);
+                bool carry;
+                uint32_t travel = travel_squared(dx, dy, &carry);
 
                 /*
                  * Keep following the contact after it qualifies. The first
@@ -459,11 +472,14 @@ static void zip_matrix_reduce_contact(struct zip_matrix_stream *data,
                  * from, so hold on to the farthest point instead. The latch
                  * itself still fires once, to drop the pending hold.
                  */
-                if (travel >= flick_threshold_squared(cfg) &&
-                    travel > data->contact.flick_max_travel) {
+                if ((carry || travel >= flick_threshold_squared(cfg)) &&
+                    ((carry && !data->contact.flick_max_travel_carry) ||
+                     (carry == data->contact.flick_max_travel_carry &&
+                      travel > data->contact.flick_max_travel))) {
                     effects->cancel_hold = !data->contact.flick_latched;
                     data->contact.flick_latched = true;
                     data->contact.flick_max_travel = travel;
+                    data->contact.flick_max_travel_carry = carry;
                     data->contact.flick_gesture = get_gesture_type(cfg, dx, dy);
                 }
             }
@@ -530,7 +546,9 @@ static bool zip_matrix_apply_effects(struct zip_matrix_data *owner,
         (void)k_work_cancel_delayable(&data->hold_work);
     }
     if (effects->schedule_hold) {
-        (void)k_work_reschedule(&data->hold_work, K_MSEC(cfg->long_press_ms));
+        (void)k_work_reschedule(&data->hold_work,
+                               K_TICKS(zip_matrix_timeout_ticks(cfg->long_press_ms,
+                                                                CONFIG_SYS_CLOCK_TICKS_PER_SEC)));
     }
     if (effects->report_gesture) {
         struct zmk_kscan_matrix_claim tap = {0};

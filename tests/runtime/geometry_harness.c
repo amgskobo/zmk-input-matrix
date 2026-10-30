@@ -29,7 +29,10 @@ int main(void) {
     assert(row == 0U && column == 0U);
     calculate_kscan_coordinates(&grid, 1024U, 512U, GESTURE_RIGHT, &row, &column);
     assert(row == 14U && column == 2U);
-    assert(travel_squared(65534, 65534) == 8589410312ULL);
+    bool carry;
+    uint32_t travel = travel_squared(65534, 65534, &carry);
+    assert(((uint64_t)carry << 32 | travel) == 8589410312ULL);
+    assert(get_gesture_type(&grid, 65534, 65534) == GESTURE_DOWN);
     assert(get_gesture_type(&grid, 30, 40) == GESTURE_DOWN);
     assert(get_gesture_type(&grid, 29, 40) == GESTURE_TAP);
     assert(get_gesture_type(&grid, 50, 0) == GESTURE_RIGHT);
@@ -99,7 +102,8 @@ int main(void) {
     calculate_kscan_coordinates(&grid, 100U, 100U, GESTURE_TAP, &row, &column);
     assert(row == 0U && column == 0U);
     grid.diamond_tap = false;
-    assert(travel_squared(-30, -40) == 2500ULL);
+    travel = travel_squared(-30, -40, &carry);
+    assert(((uint64_t)carry << 32 | travel) == 2500ULL);
     assert(get_gesture_type(&grid, -30, -40) == GESTURE_UP);
     assert(get_gesture_type(&grid, -50, 0) == GESTURE_LEFT);
     puts("matrix geometry: PASS");

@@ -108,3 +108,37 @@ modules cannot supply missing dependencies. The canonical host entry runs
 `integration/test_workspace_env.py`, including failed-discovery/empty-list
 regressions and a symlinked cache with paths containing spaces. The native entry
 uses the same selection helper. This validates dependency selection, not hardware.
+
+## 32-bit arithmetic and clock contract
+
+Normalized geometry uses bounded uint32 products. Squared travel keeps one explicit carry bit alongside its uint32 low word, retaining exact farthest-point ordering up to the maximum supported coordinates. Hold deadlines use modulo uint32 uptime and explicit armed state, including deadline zero after wrap. Pending deadlines assume elapsed observations below 2^31 ms.
+
+runtime/geometry_harness.c retains exact large squared-distance and direction/tie assertions using a test-only wide reference. runtime/driver_harness.c adds carry ordering and wrapped/zero/unarmed hold deadlines. Existing generated-key, reset and settings/race assertions remain.
+
+## Native-width hold timeout conversion
+
+The variable hold-work reservation uses the private `src/matrix_timeout.h`
+conversion. The full uint16 range of 0..65535 ms, exact ceiling, zero-disable
+behavior, contact deadlines, generations, claims/releases and settings/layer
+cancellation remain unchanged. Clock rates through 65536 Hz use a bounded
+uint32 numerator. Higher rates split seconds and fractional products while
+retaining the kernel tick ABI, without a software 64-bit divider or a new clock
+restriction.
+
+The canonical host entry includes `test_timeout_width.py`. It executes every
+uint16 interval at 14 rates against an independent wide ceiling oracle with
+both 32/64-bit tick forms. Full retains optimized, ASan/UBSan, measured nonzero
+100% header line/branch coverage and m32 numeric/object variants. Four semantic
+faults each must compile and produce qualified C assertion failures three times
+per tick form. A numerically correct wide-divider control must be rejected by
+the object-width guard. No existing behavioral assertion is removed.
+
+The existing real-kernel fixture additionally compares the private production
+header with pinned Zephyr 32/64-bit conversions at 7 positive rates for every
+uint16 interval. It retains all hold/settings/layer groups, ordered output and
+three repeats per supported core. This verifies calculation and named kernel
+boundaries; physical HID/split/sensor timing and power remain unmeasured.
+
+```sh
+python3 -m unittest discover -s tests -p test_timeout_width.py -v
+```

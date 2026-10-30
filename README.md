@@ -18,7 +18,7 @@ runtime-settings UI is optional and is enabled only on a tree that provides
 
 - **Dynamic Grid**: Configure any grid size (e.g., 1x1, 2x2, 3x3)
 - **Block Layout**: Each gesture (Tap/Up/Down/Left/Right) gets a full block stacked vertically
-- **SYN-Based Latching**: Coordinates are latched on `INPUT_SYN_REPORT` for stable start positions
+- **Synchronized Latching**: The first complete coordinate pair after touch-on is latched on an input event with `event->sync` set, establishing a stable start position
 - **Long-Press Support**: Configurable tap-hold duration (set `0` to disable)
 - **Layer-Change Safe**: A held cell is released, a pending hold cancelled, and the contact closed out, when the layer changes out from under it
 - **Split Keyboard Ready**: Optimized for central-side processing
@@ -114,6 +114,10 @@ of existing stored values. Structural gesture/KSCAN APIs are unchanged.
 See [the assertion map](tests/README.md) and
 [native composition checks](tests/deep-scan/README.md). Test scenarios that
 change both owners do so explicitly; a separate fixture proves independence.
+
+Concurrent settings notifications serialize their complete read/apply transactions,
+so an older snapshot cannot overwrite a later edit. Input processing keeps its
+existing locks; the additional adapter lock is used only for settings events.
 
 ## Installation
 
@@ -343,10 +347,23 @@ Points on a diagonal boundary prefer the vertical axis, so the exact center maps
 
 `flick-threshold` is still required by the binding but has no effect on a diamond instance.
 
+## 32-bit arithmetic and clock contract
+
+Normalized geometry uses bounded `uint32_t` products. Squared travel keeps
+one explicit carry bit alongside its 32-bit low word, retaining exact
+farthest-point ordering up to the maximum supported coordinates.
+
+Hold deadlines use modulo `uint32_t` uptime and explicit armed state,
+including deadline zero after wrap. Pending deadlines assume elapsed
+observations below 2^31 ms. The [test guide](tests/README.md) maps independent
+wide references for large squared distances, direction/tie assertions, carry
+ordering, wrapped/zero/unarmed deadlines, generated keys, resets and settings
+races.
+
 ## Tests
 
 ```sh
-python3 tests/runtime/run.py        # or: bash ./tests/run-docker.sh
+bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
@@ -382,13 +399,9 @@ DYA additionally checks two-node settings isolation through the actual registry.
 They use actual delayed work, layer events and the KSCAN proxy recording callback;
 see [the test guide](tests/README.md) for a prepared-workspace command and transport limits.
 
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
 The standalone algorithm has no final-filter dependency. Composition tests require an explicit
 `ZMK_TEST_SUPPRESS_ROOT`; no sibling path is assumed.
 
-Concurrent settings notifications serialize their complete read/apply transactions,
-so an older snapshot cannot overwrite a later edit. Input processing keeps its
-existing locks; the additional adapter lock is used only for settings events.
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
