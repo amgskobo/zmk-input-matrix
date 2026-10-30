@@ -1,221 +1,113 @@
-# Maintainer Guide: ZMK Input Matrix
+# Input Matrix: implementation contract
 
-This file is the implementation contract for maintainers and coding agents.
-User-facing installation and configuration belong in `README.md` and
-`README_JA.md`; keep this document focused on invariants, concurrency, test
-coverage, and release checks.
+Do not commit or create/update PRs without an explicit user request.
 
-## Scope
+Read [AGENTS.md](AGENTS.md) for workflow, checks and evidence rules. Installation
+and user configuration belong in [README.md](README.md) and
+[README_JA.md](README_JA.md).
 
-The module contains two devices:
+## Scope and public interfaces
 
-- `zmk,input-processor-matrix` consumes absolute X/Y and touch events and
-  classifies a contact as Tap, Flick Up, Flick Down, Flick Left, or Flick Right.
-- `zmk,kscan-input-matrix` is a virtual KSCAN output. The processor reports the
-  selected cell through it so an ordinary ZMK keymap can bind the gesture.
+`zmk,input-processor-matrix` classifies absolute X/Y/touch into Tap and four
+Flick directions. `zmk,kscan-input-matrix` exposes the selected cell to ordinary
+keymaps. The processor runs only on the split central; peripherals forward raw
+input. Preserve binding names, settings keys, subsystem ID and gesture order;
+changes require an explicit migration plan.
 
-The input processor is central-only on split keyboards. A peripheral may send
-input to the central, but it must not instantiate an independent processor.
+Bindings are [processor](dts/bindings/zmk,input-processor-matrix.yaml) and
+[KSCAN](dts/bindings/zmk,kscan-input-matrix.yaml). Normal KSCAN geometry is
+`columns` by `rows * 5`; blocks are Tap, Up, Down, Left, Right in that order.
+Diamond mode is processor 1x4/KSCAN 1x4, taps only: Up, Right, Down, Left;
+diagonal ties prefer vertical and the exact center maps Down.
 
-## Public interfaces
+The [runtime API](include/zmk-input-matrix/matrix_runtime.h) changes only
+`enabled`, `flick_threshold` and `long_press_ms`. Geometry, coordinate ranges,
+output device and diamond mode remain compile-time properties. Accept only
+this driver's devices, reject zero flick threshold and replace parameters
+atomically. Successful updates advance reset generation and resync streams;
+zero long-press disables holding. Preserve the public setter reset contract.
 
-### Devicetree
+## State and output ownership
 
-Processor properties are defined by
-`dts/bindings/zmk,input-processor-matrix.yaml`:
+Node-wide state owns configuration and output selection. All coordinates,
+touch/flick/hold state, maximum travel/direction, delayed hold work, contact IDs
+and applied generation belong to the listener's `input_device_index` stream.
+Multiple local/split listeners may share one node; never share their histories
+or replace independence with one node per pad. Size streams from enabled
+listeners; invalid indices pass through silently without aliasing stream zero.
 
-- `rows`, `columns`: grid dimensions.
-- `x`, `y`: maximum absolute coordinates.
-- `flick-threshold`: minimum Euclidean travel for a flick.
-- `long-press-ms`: delay before a Tap cell is held; zero disables holding.
-- `kscan`: virtual KSCAN output device.
-- `diamond-tap`: taps-only 1x4 diagonal partition.
-- `suppress-abs`, `suppress-btn-touch`, `suppress-key`: input suppression.
-
-The KSCAN properties are defined by
-`dts/bindings/zmk,kscan-input-matrix.yaml`. Its dimensions must match the
-processor output:
-
-- normal mode: `columns` must match and KSCAN rows must be `rows * 5`;
-- diamond mode: `columns = 4`, processor `rows = 1`, and KSCAN `rows = 1`.
-
-Do not rename existing properties or change gesture row order. Both are public
-interfaces used by downstream devicetrees and keymaps.
-
-### Runtime API
-
-`include/zmk-input-matrix/matrix_runtime.h` exposes get/set operations for:
-
-- `enabled`;
-- `flick_threshold`;
-- `long_press_ms`;
-- `suppress_abs`;
-- `suppress_btn_touch`;
-- `suppress_key`.
-
-Structural properties (`rows`, `columns`, `x`, `y`, `kscan`, and
-`diamond-tap`) remain compile-time configuration. Changing them at runtime
-would invalidate the KSCAN geometry or keymap.
-
-The setter accepts only devices instantiated by this driver and rejects a zero
-flick threshold. A successful update replaces the parameter set atomically
-from a reader's point of view, increments the reset generation, and resyncs
-every listener stream.
-
-### DYA custom settings
-
-When `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, the module registers
-`amgskobo__matrix` and publishes one setting set per processor instance.
-Persistence is owned exclusively by `zmk-feature-custom-settings`; the matrix
-driver holds only live values.
-
-Setting keys are `<devicetree-node-name>.<field>`. Both the RPC key and full
-`custom_settings/<subsystem>/<key>` storage name are checked at compile time.
-Never remove these checks: otherwise an RPC write may appear successful but
-fail later when Zephyr tries to persist an overlong name.
-
-## Gesture layout
-
-Normal mode stacks five equally sized blocks in this fixed order:
-
-| Block | Gesture | Row offset |
-| ---: | --- | ---: |
-| 0 | Tap | `rows * 0` |
-| 1 | Flick Up | `rows * 1` |
-| 2 | Flick Down | `rows * 2` |
-| 3 | Flick Left | `rows * 3` |
-| 4 | Flick Right | `rows * 4` |
-
-Diamond mode reports taps only. Columns are Up, Right, Down, Left. A point on
-a diagonal prefers the vertical axis; the exact center maps to Down.
-
-## State ownership
-
-Configuration and the output KSCAN device belong to the processor node. All
-contact state belongs to an input stream selected by
-`zmk_input_processor_state.input_device_index`:
-
-- current and start coordinates;
-- touch, flick, and hold state;
-- maximum flick travel and direction;
-- delayed hold work;
-- contact identifiers;
-- suppressed-button records;
-- applied reset generation.
-
-This split is mandatory. Multiple listeners, including a local pad and a
-split-proxied pad, may share one processor node. They must never overwrite each
-other's gesture, hold timer, or suppression record. Do not move stream fields
-back into node-wide data and do not create one node per pad as a workaround.
-
-The stream array is sized from enabled input-listener instances. An invalid
-runtime index is passed through without logging in the event hot path; it must
-never alias stream zero.
+Virtual KSCAN owns the union of claims across processors. Emit only the first
+press and final release; a tap on an occupied cell adds no edge. Claims outlive
+acquisition/release, and failed acquisition must not be released. Preserve
+bounded claim/edge capacity and atomic admission reserving the final release.
+One FIFO drainer orders concurrent/reentrant output; callbacks run outside locks.
+Never mix raw `report_event` with claim ownership APIs for the same cell.
 
 ## Event contract
 
-1. Buffer `INPUT_ABS_X` and `INPUT_ABS_Y`, clamped to the configured range.
-2. Treat only the off-to-on `INPUT_BTN_TOUCH` transition as a new contact.
-   Repeated touch-on reports must not restart the gesture.
-3. On the first synchronized report with touch active and both coordinates
-   available, latch the start position and optionally schedule long press.
-4. Compare squared Euclidean travel with the squared flick threshold. The
-   first qualifying movement cancels long press. Continue tracking and use the
-   direction at the farthest point, not the first threshold crossing.
-5. On release, report a held-cell release, a latched flick, or a tap. Clear all
-   buffered contact state so a later touch cannot inherit stale coordinates.
-6. Suppression occurs only after the driver has consumed the event. Never drop
-   a button release unless this same stream suppressed its matching press.
+1. Buffer X/Y and clamp to the configured coordinate range.
+2. Only off-to-on touch starts a contact; repeated positives do not restart it.
+3. The first synchronized touched report with both axes latches origin and
+   optionally schedules a hold.
+4. Compare squared Euclidean travel against the squared threshold. First
+   qualification cancels hold; retain direction at the farthest point.
+5. Release emits a held-cell release, latched flick or tap, then clears contact
+   buffers so the next touch cannot inherit coordinates.
+6. Preserve original KEY type/code/value/sync, including generation discards.
+   A reset may neutralize stale coordinates while retaining sync.
 
-`suppress-btn-touch` consumes only `INPUT_BTN_TOUCH`. `suppress-key` consumes
-all key events. `suppress-abs` consumes all absolute events. Preserve these
-distinct meanings.
+Source button disposition and pending HID frames belong to the final filter.
+Do not add filter references/APIs/settings to Matrix. `enabled` controls only
+gestures. Composition supplies one final instance on every listener route;
+Matrix sees only its selected gesture routes and cannot infer bypassed edges.
+Runtime edits must not change final masks. Retain complete-pair, ordered-frame,
+repeat, overlap, first-click recovery and strict-click composition assertions.
 
-## Hold and reset races
+## Hold/reset concurrency
 
-Every contact has a monotonically changing `contact_id`. Delayed hold work may
-cross a release, new contact, layer change, or settings update. The handler and
-event path use `hold_reported`, `hold_release_pending`, and contact IDs so any
-press that escapes is paired with exactly one release and cannot clear a newer
-contact.
+Contact IDs change at every contact/reset. Delayed handlers use contact ID,
+`hold_reported` and `hold_release_pending` so any escaping press gets exactly
+one release and cannot clear a replacement contact or its deadline.
 
-Node-wide `reset_generation` is atomic. Event processing records it on entry
-and checks it again immediately before cancellation, scheduling, or KSCAN
-output. If it changed, the event is discarded and the stream is resynchronized
-instead of mixing old and new settings. `applied_generation` is atomic too;
-do not replace it with an unlocked plain integer.
+Keep node reset generation and applied stream generation atomic. Check the
+generation on event entry and immediately before cancellation, scheduling or
+KSCAN output; a change discards stale work and resynchronizes the stream.
+An already claimed hold release still emits once. Re-read generation after
+its callback, which can change layers/settings; original KEY edges survive.
 
-A layer change and a runtime settings update both resync all streams:
+Layer/settings resync releases generated holds, cancels delayed work, clears
+touch/coordinates/origin/flick, advances contact ID and applies current generation.
+Source button history remains with the final owner. Keep contact reduction
+separate from KSCAN/work effects and retain release/cancellation assertions.
+Callbacks, KSCAN reporting and work operations stay outside stream spinlocks;
+parameter copies use their own lock for coherent snapshots.
 
-- release any reported hold;
-- cancel pending delayed work;
-- clear touch, coordinates, start, flick, and suppression state;
-- increment the contact ID;
-- apply the current generation.
+## Settings and hot paths
 
-KSCAN reporting and work cancellation/scheduling must remain outside stream
-spinlocks. Runtime parameter copies are protected by their own spinlock so the
-event path always receives a coherent parameter snapshot.
+With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS`, register `amgskobo__matrix`
+per processor. Custom Settings exclusively owns persistence; Matrix keeps live
+values. Keys use actual node names. Preserve compile-time checks for both RPC
+keys and complete `custom_settings/<subsystem>/<key>` storage names.
+Boot applies all instances; edits affect only their owner. Serialize the whole
+registry read/apply transaction to prevent an older snapshot overwriting edits.
+Read settings on settings events, never per coordinate.
 
-## Performance rules
+Keep coordinate work bounded and allocation-free: no blocking, sleep, settings
+I/O/descriptor scans, normal-path logging or KSCAN callbacks under spinlocks.
+Keep callback/coordinate words separate from edge polarity without narrowing
+public coordinates or reducing capacity. Acquire/release transfers its output
+lock to the drainer, which returns unlocked; no nested acquisition. Empty or
+already-draining queues only unlock/return. Preserve release reservation/FIFO.
 
-The coordinate hot path must remain bounded and allocation-free. It may use
-fixed-width integer arithmetic, spinlocks, and atomic loads, but must not:
+## Build and checks
 
-- allocate memory;
-- block or sleep;
-- perform settings I/O;
-- scan settings descriptors;
-- perform logging in the normal successful path;
-- put KSCAN reporting inside a spinlock.
+Attach sources to ZMK's `app` target for the required application headers.
+Compile the adapter only when its option is enabled; the base module builds
+without DYA Custom Settings. Follow `tests/README.md` for unchanged stock/DYA,
+shared-listener, settings/registration, native, producer and negative controls.
+For downstream integration changes, build the keyboard's required central,
+peripheral and settings-reset targets. Inspect warnings and linked feature keys.
 
-Runtime settings are re-read only when a settings event occurs. The custom
-settings listener may scan the small instance set because it is not in the
-input-event hot path.
-
-## Build integration
-
-Sources are attached to ZMK's `app` target. Keep this arrangement: current
-upstream ZMK does not expose all application headers to an independent Zephyr
-module library, while both upstream and DYA builds expose them to `app`.
-
-The custom-settings source is compiled only when
-`CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS` is enabled. The base module must
-continue building without the DYA custom-settings dependency.
-
-## Tests and release gate
-
-`.github/workflows/test.yml` builds the integration fixture against:
-
-- upstream `zmkfirmware/zmk` `main`;
-- the DYA fork's `main+dya` with custom settings enabled.
-
-The fixture deliberately connects two input listeners to one processor node.
-The DYA build also checks that the subsystem and representative setting keys
-are linked into the firmware.
-
-Before release or pull request:
-
-1. Run `git diff --check`.
-2. Run both integration variants:
-   - `bash tests/run-integration-docker.sh upstream`
-   - `bash tests/run-integration-docker.sh dya`
-3. Build at least one real central, peripheral, and settings-reset target when
-   the downstream keyboard provides them.
-4. Inspect compiler output for warnings originating in this module.
-5. Confirm no keyboard name, user name, serial number, local path, or hardware
-   identifier has entered source, docs, fixtures, or artifacts.
-6. Keep README English/Japanese instructions and the MIT license current.
-
-Do not claim public readiness if either upstream or DYA integration fails.
-
-## Repository hygiene
-
-- Preserve SPDX headers and LF line endings.
-- Keep names generic; examples and fixtures must not depend on a private board.
-- Do not commit build products, logs, temporary directories, or generated UF2
-  files.
-- Do not change public binding names, setting keys, subsystem ID, or gesture
-  ordering without an explicit migration plan.
-- Do not commit, push, tag, publish a release, or open a pull request unless the
-  current task explicitly authorizes it.
+Keep generic examples, SPDX/MIT headers and LF; exclude build products/logs
+from publication. Host CPU comparisons require every scenario and real linked
+footprint, and do not establish Cortex-M latency, power or physical acceptance.

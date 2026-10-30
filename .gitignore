@@ -17,3 +17,10 @@ Thumbs.db
 *~
 *.tmp
 *.bak
+
+# Separately pinned CI test dependencies
+.test-dependencies/
+
+# Python test caches
+__pycache__/
+*.py[cod]

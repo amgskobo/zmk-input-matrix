@@ -4,6 +4,7 @@
  */
 
 #include <physical_layouts.dtsi>
+#include <dt-bindings/input/suppress.h>
 #include <dt-bindings/zmk/matrix_transform.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
@@ -70,6 +71,11 @@
         >;
     };
 
+    final_filter: final_filter {
+        compatible = "zmk,input-processor-suppress";
+        #input-processor-cells = <1>;
+    };
+
     matrix: matrix {
         compatible = "zmk,input-processor-matrix";
         #input-processor-cells = <0>;
@@ -79,19 +85,19 @@
         y = <1024>;
         flick-threshold = <50>;
         long-press-ms = <300>;
-        suppress-btn-touch;
+
         kscan = <&matrix_kscan>;
     };
 
     matrix_listener_left {
         compatible = "zmk,input-listener";
         device = <&matrix_source_left>;
-        input-processors = <&matrix>;
+        input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>;
     };
 
     matrix_listener_right {
         compatible = "zmk,input-listener";
         device = <&matrix_source_right>;
-        input-processors = <&matrix>;
+        input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>;
     };
 };

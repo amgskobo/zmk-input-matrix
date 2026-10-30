@@ -12,13 +12,13 @@ A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a con
 The module is continuously compile-tested against both upstream ZMK `main`
 and the DYA fork's `main+dya`. Core gesture processing works on either tree. The
 runtime-settings UI is optional and is enabled only on a tree that provides
-`zmk-feature-custom-settings`, such as `main+dya`.
+[`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings), such as `main+dya`.
 
 ## Features
 
 - **Dynamic Grid**: Configure any grid size (e.g., 1x1, 2x2, 3x3)
 - **Block Layout**: Each gesture (Tap/Up/Down/Left/Right) gets a full block stacked vertically
-- **SYN-Based Latching**: Coordinates are latched on `INPUT_SYN_REPORT` for stable start positions
+- **Synchronized Latching**: The first complete coordinate pair after touch-on is latched on an input event with `event->sync` set, establishing a stable start position
 - **Long-Press Support**: Configurable tap-hold duration (set `0` to disable)
 - **Layer-Change Safe**: A held cell is released, a pending hold cancelled, and the contact closed out, when the layer changes out from under it
 - **Split Keyboard Ready**: Optimized for central-side processing
@@ -26,7 +26,7 @@ runtime-settings UI is optional and is enabled only on a tree that provides
 
 One processor node may be shared by multiple ZMK input listeners. Configuration
 and the output KSCAN device belong to the node, while contact coordinates,
-flick detection, hold work, contact generations, and suppressed-button records
+flick detection, hold work and contact generations
 belong to `input_device_index`. Local and split-proxied pads therefore cannot
 overwrite each other's in-progress gesture state and do not need duplicate
 matrix processor nodes. An invalid listener index is passed through and never
@@ -34,18 +34,34 @@ aliases stream zero.
 
 The delayed long-press handler performs only bounded in-memory state changes
 and KSCAN reporting: it does not sleep, allocate, scan settings, or write
-flash. It intentionally remains on Zephyr's cooperative system work queue so
-a touch release cannot interleave between its paired hold press bookkeeping.
+flash. Contact generations and pending-release bookkeeping reconcile a release
+or settings change that arrives while a hold is being admitted.
+
+When inputs share a virtual output cell, the first active source presses it
+and the final source releases it. A tap over an already held cell leaves that
+cell held. This applies across processor nodes as well as listeners. Independent
+cells retain their own output order. The bounded ownership API defaults to 16
+simultaneous claims and 32 pending/reserved edges per output; adjust
+`CONFIG_ZMK_INPUT_MATRIX_MAX_CLAIMS` and
+`CONFIG_ZMK_INPUT_MATRIX_EVENT_QUEUE_SIZE` for a larger graph. A rejected new
+claim produces no partial press; an accepted claim retains its final release
+capacity. Callback disable/replacement does not promise held-state replay or
+cleanup of the previous consumer.
 
 ## Runtime settings
 
+Delayed holds belong to a contact and its deadline. A running callback from an
+older contact cannot hold its replacement before the replacement's own deadline,
+or after long press is disabled. At boot, stored settings apply to every node;
+an individual edit applies only to the node owning that setting and leaves peer
+contacts and held keys intact.
+
 With `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y`, DYA Studio exposes each
 instance under `amgskobo__matrix`. The editable values are `enabled`,
-`flick_threshold`, `long_press_ms`, `suppress_abs`, `suppress_btn_touch`, and
-`suppress_key`. The registry owns persistence. A settings update invalidates
-every listener stream; a reported hold is released, pending work is cancelled,
-and an input event overlapping the update is discarded instead of being
-processed with mixed parameters.
+`flick_threshold` and `long_press_ms`. The registry owns persistence. A settings
+update cancels gesture work and releases generated holds. Original source
+buttons pass unchanged. Matrix has no dependency, phandle or API call to an
+output filter; gesture enable and source suppression are independent settings.
 
 `rows`, `columns`, `kscan`, and `diamond-tap` remain devicetree-only because
 they define the virtual matrix and keymap layout rather than live tuning.
@@ -54,6 +70,54 @@ Setting keys begin with the devicetree node name. Keep custom instance node
 names short enough for Zephyr's persisted-settings limit. The module checks
 both the RPC key and full storage name at compile time, so an unsafe name fails
 the build instead of accepting a value that cannot be saved.
+
+### Gesture layer routes and final policy
+
+Place Matrix only on gesture routes. Append the same independent
+[`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instance to every pointer, scroll and gesture route:
+
+```dts
+#include <zmk-input-suppress/input_processor_suppress.dtsi>
+&trackpad_listener {
+    input-processors = <&zip_absolute_to_relative>,
+                       <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
+    gestures {
+        layers = <1>;
+        input-processors = <&zip_matrix>, <&input_suppress SUPPRESS_ALL>;
+    };
+};
+```
+
+Matrix observes coordinates/touch, emits virtual-KSCAN claims and passes source
+buttons unchanged. Layer events release virtual holds and cancel pending work
+even after its route is bypassed. The final filter observes every source edge,
+retains its first-press disposition across transitions and releases only claims
+it admitted. It also owns pending/silent mouse-frame normalization. A filtered
+pair stays filtered after leaving Matrix; a pointer pair can finish after
+entering it. Missing source events/lost connections require a separate cleanup
+contract; neither module invents a timeout or resets global HID state.
+
+### Migration
+
+The former source-button histories, frame state and suppression settings now
+belong to the independent final owner. Remove `suppressor`,
+`suppression-profile`, `suppress-abs`, `suppress-key` and `suppress-btn-touch`
+from Matrix nodes. Remove the runtime `suppress_abs` field. Set residual-ABS
+and button masks on the route's final-processor argument instead. Matrix's
+`enabled` controls gestures only; disabling gestures does not enable mouse
+clicks. Select that output behavior explicitly at the final owner.
+
+Old `amgskobo__matrix/<node>.suppress_abs`, `suppress_key` and
+`suppress_btn_touch` stored entries are ignored without erasure. This is an
+explicit schema migration; there is no compatibility link or automatic rewrite
+of existing stored values. Structural gesture/KSCAN APIs are unchanged.
+See [the assertion map](tests/README.md) and
+[native composition checks](tests/deep-scan/README.md). Test scenarios that
+change both owners do so explicitly; a separate fixture proves independence.
+
+Concurrent settings notifications serialize their complete read/apply transactions,
+so an older snapshot cannot overwrite a later edit. Input processing keeps its
+existing locks; the additional adapter lock is used only for settings events.
 
 ## Installation
 
@@ -70,7 +134,7 @@ manifest:
       revision: main
 ```
 
-For DYA runtime settings, also include `zmk-feature-custom-settings` in the
+For DYA runtime settings, also include [`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings) in the
 manifest and enable the integration in the central-side configuration:
 
 ```yaml
@@ -159,11 +223,13 @@ Layer changes are watched directly so that cannot leave anything behind:
 - A cell this instance has already pressed is released.
 - A hold that is only pending is cancelled, so the timer cannot fire after the layer has changed and press a cell nothing can then release.
 - The contact is closed out - the touch state and the buffered coordinates go the same way as the start point. A contact left marked active with its start cleared is the exact shape the sync path reads as a stroke beginning, so it would latch a new start and re-arm the hold that was just cancelled.
-- The record of which suppressed presses are still outstanding is dropped, so a later unrelated release cannot be swallowed in their place.
+- Source button disposition and pending HID frames stay in the common final filter across these gesture resets.
 
 The event fires on every layer change, including the ones that leave this processor in the chain - a layer key on the keyboard pressed while a finger is on the pad, say. A contact in progress is dropped either way: the pad stays inert until the finger is lifted and placed again.
 
-`suppress-key` never drops a release whose press was not suppressed here. Passing a release through is always safe - the press it belongs to already reached the host - while dropping one would leave that button held down with nothing left to release it.
+Original source buttons pass unchanged after contact processing, including
+release during a generation reset. The final owner applies its latched policy;
+Matrix retains ownership of generated-key releases and hold cancellation.
 
 ### 3. Keymap Configuration
 
@@ -230,7 +296,7 @@ Or use the [ZMK Physical Layout Converter](https://zmk-physical-layout-converter
 };
 ```
 
-See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-layouts) documentation for details.
+See the [ZMK Physical Layouts](https://zmk.dev/docs/hardware-integration/physical-layouts) documentation for details.
 
 ## Configuration Reference
 
@@ -243,9 +309,6 @@ See the [ZMK Physical Layouts](/docs/development/hardware-integration/physical-l
 | `flick-threshold` | int | Required | Minimum travel from the start point to register a flick |
 | `kscan` | phandle | Required | The `zmk,kscan-input-matrix` proxy that receives the gesture events |
 | `long-press-ms` | int | 200 | Tap hold time (ms), 0 to disable |
-| `suppress-abs` | bool | false | Consume all `INPUT_EV_ABS` events, not only X/Y |
-| `suppress-btn-touch` | bool | true in the supplied `zip_matrix` node | Consume only `INPUT_BTN_TOUCH`. Add the property to custom nodes to enable it; an omitted Devicetree boolean is false. |
-| `suppress-key` | bool | false | Consume all `INPUT_EV_KEY` events, including touchpad button gestures |
 | `diamond-tap` | bool | false | Report taps only, split into D-pad-style diamond zones on a 1x4 grid |
 
 Limits are enforced at build time: `rows` must be 1-51, `columns` 1-255, `x`/`y` 1-65534, `flick-threshold` 1-65535, and `long-press-ms` 0-65535.
@@ -284,27 +347,60 @@ Points on a diagonal boundary prefer the vertical axis, so the exact center maps
 
 `flick-threshold` is still required by the binding but has no effect on a diamond instance.
 
+## 32-bit arithmetic and clock contract
+
+Normalized geometry uses bounded `uint32_t` products. Squared travel keeps
+one explicit carry bit alongside its 32-bit low word, retaining exact
+farthest-point ordering up to the maximum supported coordinates.
+
+Hold deadlines use modulo `uint32_t` uptime and explicit armed state,
+including deadline zero after wrap. Pending deadlines assume elapsed
+observations below 2^31 ms. The [test guide](tests/README.md) maps independent
+wide references for large squared distances, direction/tie assertions, carry
+ordering, wrapped/zero/unarmed deadlines, generated keys, resets and settings
+races.
+
 ## Tests
 
 ```sh
-python3 tests/geometry/run.py
+bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
-The geometry test compiles the driver's coordinate and gesture functions
-directly, in optimized and ASan/UBSan builds. It checks grid edges, diamond
-zones, diagonal flick thresholds and wide squared travel, then exhausts every
-coordinate of small rectangular and diamond panels. A separate gcov run reports
-line and branch coverage of this extracted geometry test, not the entire driver.
+The runtime test lifts the driver's own functions into the stubbed harnesses in
+`tests/runtime/`. Quick runs every host scenario under ASan/UBSan; full also
+runs optimized and gcov variants with the complete line/branch gate. The
+geometry harness checks grid edges, diamond zones, diagonal flick thresholds and
+wide squared travel, then exhausts every coordinate of small rectangular and
+diamond panels. The driver harness plays contacts through the event handler:
+taps, flicks that follow the farthest point, long-press holds, touches and
+settings writes landing while a hold is being pressed, paired key suppression,
+per-listener streams and layer-change releases. Two more cover the virtual KSCAN
+proxy and the settings helpers. Full-mode CI requires 100% line and branch coverage of
+each lifted function: seven geometry functions, eighteen driver functions (including the layer
+listener and layer cleanup), ten proxy functions and the settings bridge. The apply step that
+turns stored settings into driver calls is lifted with its macro too, and the
+runner fails if any function in the sources has no gate. Devicetree
+instantiation itself is left to the firmware fixtures below.
 
 Each variant builds a firmware fixture in which two input listeners share one
 matrix node, and checks that the processor and the virtual KSCAN proxy are
 enabled. `upstream` builds against ZMK `main` and confirms that the custom
 settings stay off; `dya` builds against the DYA ZMK fork with custom settings on
-and confirms that the `amgskobo__matrix` subsystem and every setting
+and confirms that the `amgskobo__matrix` subsystem and all setting
 keys are linked into the firmware. GitHub Actions runs both on every pull
-request and on pushes to `main`.
+request, on pushes to `main`, and weekly.
+
+The integration variants run nine focused kernel scenarios and 46 Matrix
+ownership/route/frame cases three times per binary. With the required pinned
+IQS producer, both CI firmware jobs add 17 actual-producer cases (63 total).
+DYA additionally checks two-node settings isolation through the actual registry.
+They use actual delayed work, layer events and the KSCAN proxy recording callback;
+see [the test guide](tests/README.md) for a prepared-workspace command and transport limits.
+
+The standalone algorithm has no final-filter dependency. Composition tests require an explicit
+`ZMK_TEST_SUPPRESS_ROOT`; no sibling path is assumed.
 
 ## License
 

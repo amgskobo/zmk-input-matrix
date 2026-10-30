@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "owner": "zmk-input-matrix",
+  "supported_cores": [
+    "stock-zmk",
+    "dya"
+  ],
+  "unsupported_core_status": "NOT APPLICABLE",
+  "commands": [
+    "bash tests/run-docker.sh",
+    "python3 -m unittest discover -s tests -p test_runtime_coverage.py -v; included in canonical host/CI entry",
+    "python3 -m unittest discover -s tests/integration -p test_*.py -v (inside the Linux build image)",
+    "Explicit offline integration: tests/integration/run.sh; see tests/README.md for pinned workspaces, variant selection and fresh outputs",
+    "Standard integration entries also run tests/deep-scan/run.py on the exact selected core",
+    "python3 tests/performance/run.py FRESH_OUTPUT --reference BEFORE_KSCAN_SOURCE; host CPU/critical-section counts only; see tests/README.md",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS; 46 Matrix + 17 actual IQS producer cases; retired synthetic producer removed, both supported cores",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --iqs-only --negative-control iqs-inline-first; require two named failures three times",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --negative-control inactive-matrix; omit Matrix and require the named isolation failure three times",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --strict-clicks; five additional strict/robustness checks; current direct-mask composition requires PASS",
+    "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --iqs-only --negative-control iqs-drop-release; omit OFF delivery and require final held-button failure3/3",
+    "CI firmware entry: ZMK_TEST_REQUIRE_IQS=1 ZMK_TEST_IQS_ROOT=PINNED_IQS ZMK_TEST_OUTPUT=FRESH_OUTPUT bash tests/run-integration-docker.sh upstream|dya; all63 cases required, fresh retained evidence. See tests/README.md.",
+    "python3 -m unittest discover -s tests -p test_timeout_width.py -v; included in canonical host quick/full"
+  ],
+  "coverage_map": "tests/contract.json",
+  "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
+  "execution": {
+    "quick": "All behavioral scenarios once; sanitizer variants where supported.",
+    "full": "Same scenarios plus relevant optimization, ABI, role, kernel and supported-core checks.",
+    "outputs": "Use a fresh evidence directory; existing evidence is never overwritten.",
+    "coverage": "Every gated real function range requires executable gcov lines; actual-entry controls reject empty, unrelated and partially measured reports without changing behavioral assertions."
+  },
+  "gaps": [
+    "Required contract: complete balanced source pairs, final release and recovery; early release across route changes permitted. All46 Matrix plus17 actual IQS cases are required. Source/sensor/split/physical limits remain separate; IQS NOT RUN without explicit checkout.",
+    "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence.",
+    "Consumer pause/replacement, source removal, unobserved edges on non-Matrix routes, and earlier asymmetric edge filtering require an end-to-end input/consumer ownership contract.",
+    "Arbitrary thread interleavings are not exhaustively proven by the named host/native fixtures."
+  ],
+  "suppression_extraction": "Source buttons are transparent; independent final filter owns pair/repeat/pending-frame policy. Current map and retired-contract boundaries: tests/README.md.",
+  "scheduled_work_settings_review": "The driver fixture injects replacement before the hold handler's stream lock, with disabled, changed and unchanged long-press settings, and checks the new contact's deadline. The kernel fixture pauses a real running handler at the same unlocked boundary: six retained groups plus three replacement groups, one binary three times/core. DYA additionally enables the actual settings registry and holds two processor nodes: a foreign edit changes neither hold; editing the peer releases only its own claim. The two-node host adapter retains every range/read/reset case and tests every descriptor, foreign events and initialization. Equal public API setter calls still reset their own node; notification dispatch is the isolation boundary. The guarded hold hook is enabled only by the owner kernel fixture.",
+  "concurrent_settings": "Concurrent notifications are serialized across the complete settings read/apply transaction. The DYA kernel fixture wraps the real registry read to pause writer A after its snapshot, commits writer B on another Zephyr thread, then resumes A. Live values must finish at the registry's latest values. The same before-fix binary fails three times; the fixed DYA fixture runs three times. The wrapper exists only in the owner fixture; production has no settings test hook.",
+  "integer_width": {
+    "production": "Geometry/deadline arithmetic uses 32-bit words; timeout results retain the kernel tick ABI. Independent wider oracles remain test-only.",
+    "contract": "Normalized geometry uses bounded uint32 products. Squared travel keeps one explicit carry bit alongside its uint32 low word, retaining exact farthest-point ordering up to the maximum supported coordinates. Hold deadlines use modulo uint32 uptime and explicit armed state, including deadline zero after wrap. Pending deadlines assume elapsed observations below 2^31 ms.",
+    "fixtures": "runtime/geometry_harness.c retains exact large squared-distance and direction/tie assertions using a test-only wide reference. runtime/driver_harness.c adds carry ordering and wrapped/zero/unarmed hold deadlines. Existing generated-key, reset and settings/race assertions remain.",
+    "physical": "NOT RUN"
+  },
+  "timeout_conversion": {
+    "contract": "Single variable hold-work timeout; full uint16 range, exact ceiling, configured tick ABI, zero-disable and all contact/deadline/generation/output policy retained",
+    "fixture": {
+      "fixture": "tests/timeout/test_timeout.c; tests/test_timeout_width.py",
+      "asserts": "Actual private hold-timeout header; all 65536 uint16 intervals at 14 rates against an independent wide ceiling oracle, both tick forms, optimized/sanitized/coverage/m32. Four semantic faults require 3 qualified failures per tick form; a numerically correct wide control fails the width guard. Real-kernel fixture also compares actual Zephyr conversions at 7 positive rates without changing existing hold/settings/layer assertions."
+    },
+    "physical": "NOT RUN"
+  }
+}

@@ -1,0 +1,4 @@
+name: matrix-deep-scan
+build:
+  cmake: .
+  kconfig: Kconfig

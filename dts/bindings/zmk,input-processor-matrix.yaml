@@ -39,24 +39,6 @@ properties:
       reliable one to take a direction from.
       The long-press timer is canceled when the contact first qualifies, and the
       flick is reported as press+release on BTN_TOUCH release.
-  suppress-abs:
-    type: boolean
-    description: |
-      If true, consume all INPUT_EV_ABS events seen by this processor, not only
-      INPUT_ABS_X and INPUT_ABS_Y. This prevents ABS pointer events from reaching
-      later processors or the mouse HID.
-  suppress-btn-touch:
-    type: boolean
-    description: |
-      If true, consume only INPUT_BTN_TOUCH after this processor updates its
-      internal touch state. Other INPUT_EV_KEY events, such as button gestures
-      emitted by the touchpad driver, continue downstream.
-  suppress-key:
-    type: boolean
-    description: |
-      If true, consume all INPUT_EV_KEY events seen by this processor, not only
-      INPUT_BTN_TOUCH. This prevents KEY events from reaching later processors or
-      behaviors.
   kscan:
     type: phandle
     required: true
