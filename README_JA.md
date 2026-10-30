@@ -11,7 +11,7 @@
 
 upstream ZMK の `main` と DYA fork の `main+dya` の両方で継続的に
 コンパイルテストします。gesture処理本体はどちらでも使用できます。ランタイム設定UIは
-任意機能であり、`main+dya` など `zmk-feature-custom-settings` を提供する構成でのみ
+任意機能であり、`main+dya` など [`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings) を提供する構成でのみ
 有効にします。
 
 ## 特徴
@@ -51,7 +51,7 @@ sleep、動的確保、settings 走査、flash 書き込みは行いません。
 ## 共通最終段とのセット構成
 
 Matrix は元のボタンと sync を変更せず後段へ渡します。入力元ごとのボタン履歴、
-繰り返し押下、抑止した対の解放、フレーム境界は、別の `zmk-input-suppress` が所有します。
+繰り返し押下、抑止した対の解放、フレーム境界は、別の [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) が所有します。
 すべての pointer / scroll / gesture 経路の末尾に同じインスタンスを配置します。
 Matrix は仮想キーが必要なレイヤー経路だけで呼びます。
 
@@ -125,7 +125,7 @@ manifest:
 ```
 
 DYAのランタイム設定を使用する場合は、manifestへ
-`zmk-feature-custom-settings` も追加し、central側の設定で連携を有効にします。
+[`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings) も追加し、central側の設定で連携を有効にします。
 
 ```yaml
   remotes:

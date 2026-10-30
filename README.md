@@ -12,7 +12,7 @@ A ZMK Input Processor that converts trackpad absolute X/Y coordinates into a con
 The module is continuously compile-tested against both upstream ZMK `main`
 and the DYA fork's `main+dya`. Core gesture processing works on either tree. The
 runtime-settings UI is optional and is enabled only on a tree that provides
-`zmk-feature-custom-settings`, such as `main+dya`.
+[`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings), such as `main+dya`.
 
 ## Features
 
@@ -74,7 +74,7 @@ the build instead of accepting a value that cannot be saved.
 ### Gesture layer routes and final policy
 
 Place Matrix only on gesture routes. Append the same independent
-`zmk-input-suppress` instance to every pointer, scroll and gesture route:
+[`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instance to every pointer, scroll and gesture route:
 
 ```dts
 #include <zmk-input-suppress/input_processor_suppress.dtsi>
@@ -134,7 +134,7 @@ manifest:
       revision: main
 ```
 
-For DYA runtime settings, also include `zmk-feature-custom-settings` in the
+For DYA runtime settings, also include [`zmk-feature-custom-settings`](https://github.com/cormoran/zmk-feature-custom-settings) in the
 manifest and enable the integration in the central-side configuration:
 
 ```yaml
