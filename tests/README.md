@@ -36,7 +36,7 @@ are removed; active KSCAN/settings logs and their Kconfig level remain.
 
 ## Dependencies and evidence
 
-Read root AGENTS.md, agent.md and resolved dependency instructions first.
+Read root AGENTS.md (AGENTS.ja.md is its Japanese translation) and resolved dependency instructions first.
 Offline integration verifies stock5b51501fead672c41b5cfb396f3dafe0894bf4e9 or
 DYAe5c9b6915b56801193e359dd9bad4a167ce0d1b8, Zephyr
 10ba6d0cb38bc3d258775d27982f707599320085 and required libraries. DYA enables

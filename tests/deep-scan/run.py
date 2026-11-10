@@ -65,7 +65,7 @@ def identities():
     for folder in ('src','include','dts','zephyr','tests/kernel','tests/deep-scan'):
         for p in sorted((root/folder).rglob('*')):
             if p.is_file(): result[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
-    for name in ('CMakeLists.txt','Kconfig','AGENTS.md','agent.md'):
+    for name in ('CMakeLists.txt','Kconfig','AGENTS.md','AGENTS.ja.md'):
         result[name]=hashlib.sha256((root/name).read_bytes()).hexdigest()
     return result
 before=identities()
