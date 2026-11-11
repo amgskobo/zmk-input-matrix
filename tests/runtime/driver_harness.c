@@ -257,7 +257,7 @@ static void test_api(void) {
         assert(stream(i)->contact.contact_id == 0 && stream(i)->contact.hold_contact_id == 0);
         assert(stream(i)->applied_generation == 0);
     }
-    assert(data.kscan_dev == &kscan && stream(1)->owner == &data);
+    assert(data.config->kscan_dev == &kscan && stream(1)->owner == &data);
 
     assert(zip_matrix_get_params(NULL, &out) == -EINVAL);
     assert(zip_matrix_get_params(&matrix, NULL) == -EINVAL);

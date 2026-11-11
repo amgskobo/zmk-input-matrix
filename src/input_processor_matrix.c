@@ -58,14 +58,14 @@ struct zip_matrix_config {
 struct zip_matrix_contact {
     uint16_t current_x, current_y;
     uint16_t start_x, start_y;
+    uint32_t flick_max_travel;
+    uint32_t contact_id, hold_contact_id;
+    uint32_t hold_due_ms; /* modulo-32-bit deadline; hold_armed distinguishes zero */
     bool is_btn_touch;
     bool is_holding, hold_reported, hold_release_pending;
     bool flick_latched;
     uint8_t flick_gesture;
-    uint32_t flick_max_travel;
     bool flick_max_travel_carry;
-    uint32_t contact_id, hold_contact_id;
-    uint32_t hold_due_ms; /* modulo-32-bit deadline; hold_armed distinguishes zero */
     bool hold_armed;
 };
 
@@ -87,7 +87,6 @@ struct zip_matrix_stream {
 
 struct zip_matrix_data {
     const struct zip_matrix_config *config;
-    const struct device *kscan_dev;
     struct k_spinlock params_lock;
     struct zip_matrix_runtime_params params;
     atomic_t reset_generation;
@@ -324,7 +323,7 @@ static void hold_work_handler(struct k_work *work)
     k_spin_unlock(&stream->lock, key);
 
     if (trigger) {
-        bool admitted = zmk_kscan_matrix_acquire(data->kscan_dev, &stream->hold_claim, r, c) == 0;
+        bool admitted = zmk_kscan_matrix_acquire(data->config->kscan_dev, &stream->hold_claim, r, c) == 0;
         k_spinlock_key_t k2 = k_spin_lock(&stream->lock);
         bool same_hold = stream->contact.is_holding && stream->contact.hold_contact_id == work_contact_id;
         bool same_contact = stream->contact.contact_id == work_contact_id;
@@ -352,7 +351,7 @@ static void hold_work_handler(struct k_work *work)
         k_spin_unlock(&stream->lock, k2);
 
         if (admitted && release_after_press) {
-            (void)zmk_kscan_matrix_release(data->kscan_dev, &stream->hold_claim);
+            (void)zmk_kscan_matrix_release(data->config->kscan_dev, &stream->hold_claim);
         }
     }
 }
@@ -389,7 +388,7 @@ static void zip_matrix_resync_stream(struct zip_matrix_data *data,
 
     (void)k_work_cancel_delayable(&stream->hold_work);
     if (release) {
-        (void)zmk_kscan_matrix_release(data->kscan_dev, &stream->hold_claim);
+        (void)zmk_kscan_matrix_release(data->config->kscan_dev, &stream->hold_claim);
     }
 }
 
@@ -534,7 +533,7 @@ static bool zip_matrix_apply_effects(struct zip_matrix_data *owner,
                                      atomic_val_t generation_before)
 {
     if (effects->release_hold) {
-        (void)zmk_kscan_matrix_release(owner->kscan_dev, &data->hold_claim);
+        (void)zmk_kscan_matrix_release(owner->config->kscan_dev, &data->hold_claim);
     }
     /* A release callback may change settings or layers before returning. */
     atomic_val_t generation_after = atomic_get(&owner->reset_generation);
@@ -552,9 +551,9 @@ static bool zip_matrix_apply_effects(struct zip_matrix_data *owner,
     }
     if (effects->report_gesture) {
         struct zmk_kscan_matrix_claim tap = {0};
-        if (zmk_kscan_matrix_acquire(owner->kscan_dev, &tap,
+        if (zmk_kscan_matrix_acquire(owner->config->kscan_dev, &tap,
                                     effects->gesture_row, effects->gesture_column) == 0) {
-            (void)zmk_kscan_matrix_release(owner->kscan_dev, &tap);
+            (void)zmk_kscan_matrix_release(owner->config->kscan_dev, &tap);
         }
     }
     return true;
@@ -609,7 +608,6 @@ static int zip_matrix_init(const struct device *dev)
     if (cfg->rows == 0 || cfg->columns == 0 || cfg->x == 0 || cfg->y == 0) return -EINVAL;
 
     data->config = cfg;
-    data->kscan_dev = cfg->kscan_dev;
     data->params = (struct zip_matrix_runtime_params){
         .enabled = true,
         .flick_threshold = cfg->flick_threshold,
