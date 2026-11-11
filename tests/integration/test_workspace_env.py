@@ -61,5 +61,15 @@ class SelectedWorkspace(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no Zephyr modules", result.stderr)
 
+    def test_invalid_compile_budget_rejected_before_discovery(self):
+        self.env["TEST_WEST_EXIT"] = "99"
+        for count in ("0", "-1", "1.5", "two"):
+            with self.subTest(count=count):
+                self.env["ZMK_TEST_BUILD_JOBS"] = count
+                result = self.run_selection()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("ZMK_TEST_BUILD_JOBS must be a positive integer", result.stderr)
+                self.assertNotIn("project discovery failed", result.stderr)
+
 if __name__ == "__main__":
     unittest.main()

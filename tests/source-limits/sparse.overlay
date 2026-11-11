@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: MIT */
+/ {
+    /delete-node/ matrix_listener_left;
+    /delete-node/ matrix_listener_right;
+    matrix_listener_left { compatible = "zmk,input-listener"; device = <&matrix_source_left>;
+                          input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>; };
+    matrix_listener_right { compatible = "zmk,input-listener"; device = <&matrix_source_right>;
+                           input-processors = <&matrix>, <&final_filter SUPPRESS_ALL>; };
+};

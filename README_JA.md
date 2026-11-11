@@ -73,6 +73,20 @@ Matrix は仮想キーが必要なレイヤー経路だけで呼びます。
 レイヤー変更による仮想キーの解放と遅延 hold の中止は Matrix に残します。
 抑止した押下の解放は経路変更後も抑止し、通した押下の解放は一度だけ通します。
 
+`CONFIG_ZMK_INPUT_MATRIX_MAX_SOURCES` の既定値は `0` で、各 Matrix node は
+有効な input listener ごとに独立 stream を確保します（最低1 slot）。`1`～`256`
+の正数は global `input_device_index` の `0`～`value - 1` を明示的に確保し、
+疎な ID を詰め替えません。Matrix route が listener ID `0` と `1` だけを使う
+keyboard は `CONFIG_ZMK_INPUT_MATRIX_MAX_SOURCES=2` で無関係な listener の
+stream 確保を省けます。設定前に全 base/child route と直接 processor caller を
+確認してください。compile-time guard は ZMK の有効 device 条件と全 child route
+（disabled child を含む）を照合し、範囲外 ID からの Matrix 参照を拒否します。
+NULL state は従来どおり slot0、無効 runtime index は入力を変更せず通過します。
+listener graph 変更時は ID を再確認してください。除外 slot ごとに各 Matrix node の
+contact、claim、delayed-work stream 一式を削減し、byte 数は選択した Zephyr ABI に
+依存します。claim 数、ordered edge 容量、hold 範囲、reset/cancel、gesture mode は
+変わりません。
+
 ## ランタイム設定
 
 `CONFIG_ZMK_INPUT_MATRIX_CUSTOM_SETTINGS=y` を有効にすると、DYA Studio の

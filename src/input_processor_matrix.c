@@ -20,6 +20,7 @@
 #include <zmk/events/layer_state_changed.h>
 #include <zmk-input-matrix/matrix_runtime.h>
 #include "matrix_timeout.h"
+#include "matrix_sources.h"
 
 #define COORD_UNINITIALIZED UINT16_MAX
 #define ZIP_MATRIX_INIT_PRIORITY UTIL_INC(CONFIG_KSCAN_INIT_PRIORITY)
@@ -28,8 +29,6 @@
 #define ZIP_MATRIX_MAX_GRID_COLUMNS UINT8_MAX
 #define ZIP_MATRIX_MAX_COORD (UINT16_MAX - 1U)
 #define ZIP_MATRIX_MAX_U16 UINT16_MAX
-#define ZIP_MATRIX_LISTENER_COUNT DT_NUM_INST_STATUS_OKAY(zmk_input_listener)
-#define ZIP_MATRIX_STREAM_COUNT MAX(ZIP_MATRIX_LISTENER_COUNT, 1)
 
 #define ZIP_MATRIX_USE_DIAMOND_TAP DT_ANY_INST_HAS_PROP_STATUS_OKAY(diamond_tap)
 
@@ -363,9 +362,11 @@ stream_for_event(struct zip_matrix_data *data, const struct zmk_input_processor_
         return &data->streams[0];
     }
 
+#if ZIP_MATRIX_STREAM_COUNT < 256
     if (state->input_device_index >= ZIP_MATRIX_STREAM_COUNT) {
         return NULL;
     }
+#endif
 
     return &data->streams[state->input_device_index];
 }
@@ -741,7 +742,10 @@ int zip_matrix_set_params(const struct device *dev,
     struct zip_matrix_data *data = dev->data;
     k_spinlock_key_t key = k_spin_lock(&data->params_lock);
     data->params = *params;
-    atomic_val_t generation = atomic_inc(&data->reset_generation) + 1;
+    /* atomic_val_t is signed long. Keep the atomic operation's own next token
+     * across its sign boundary without a signed addition outside the atomic. */
+    atomic_val_t generation =
+        (atomic_val_t)((unsigned long)atomic_inc(&data->reset_generation) + 1UL);
     k_spin_unlock(&data->params_lock, key);
     for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
         zip_matrix_resync_stream(data, &data->streams[i], generation);
@@ -766,7 +770,8 @@ int zip_matrix_set_params(const struct device *dev,
 static void zip_matrix_release_hold_on_layer_change(const struct device *dev)
 {
     struct zip_matrix_data *owner = dev->data;
-    atomic_val_t generation = atomic_inc(&owner->reset_generation) + 1;
+    atomic_val_t generation =
+        (atomic_val_t)((unsigned long)atomic_inc(&owner->reset_generation) + 1UL);
 
     for (size_t i = 0U; i < ZIP_MATRIX_STREAM_COUNT; i++) {
         struct zip_matrix_stream *stream = &owner->streams[i];

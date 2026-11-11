@@ -4,6 +4,16 @@
     "bash",
     "tests/run-docker.sh"
   ],
+  "generation_wrap": {
+    "fixture": "tests/test_generation_wrap.py; tests/runtime/generation_wrap_harness.c",
+    "asserts": "Actual setter and layer-reset functions at LONG_MAX to LONG_MIN and -1 to0; active hold final release, every stream applied generation and replacement pair. ASan/UBSan, full O2 and32-bit UBSan; original signed expressions fail at both widths3/path."
+  },
+  "source_allocation": {
+    "host": "tests/test_source_limits.py retains complete driver cases with auto2/5, limited2/256 and explicit single/fallback/NULL/invalid/reset probes; sanitized and full O2/m32",
+    "compile": "tests/integration/source-limits.py:42 actual Zephyr-generated cases; independent sparse listener-ID oracle; base/all-child/device/listener gates; bounds and named defective-guard controls",
+    "kernel": "tests/source-limits/run.py:actual input-listener callbacks0/1 auto5+limit2, sparse3/4 auto5, each binary3/core; high IDs under limit2 require named compile rejection",
+    "preserved": "Automatic default, global IDs, source independence, full geometry/hold-time range, claims, queue, stacks, generations, settings and reset/cancel behavior"
+  },
   "contracts": [
     {
       "fixture": "tests/runtime/geometry_harness.c",

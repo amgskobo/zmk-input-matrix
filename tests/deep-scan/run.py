@@ -123,7 +123,10 @@ if not iqs_root: print('IQS producer: NOT RUN (requires explicit --iqs-root)',fl
 rows=[]
 with tempfile.TemporaryDirectory(prefix='matrix-deep-scan-') as temp:
     build=Path(temp)/'build'
-    command=['west','build','-p=always','-o=-j2','-s',str(workspace/'zmk/app'),
+    jobs=os.environ.get('ZMK_TEST_BUILD_JOBS','2')
+    if not jobs.isdigit() or int(jobs) < 1:
+        parser.error('ZMK_TEST_BUILD_JOBS must be a positive integer')
+    command=['west','build','-p=always','-o=-j'+jobs,'-s',str(workspace/'zmk/app'),
         '-d',str(build),'-b','native_sim//zmk_test_mock','--','-DCONFIG_ASSERT=y',
         '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON','-DZMK_CONFIG='+str(root/'tests/kernel/config'),
         '-DEXTRA_DTC_OVERLAY_FILE='+str(root/'tests/deep-scan/extra.overlay')+

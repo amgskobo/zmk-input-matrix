@@ -32,6 +32,21 @@ overwrite each other's in-progress gesture state and do not need duplicate
 matrix processor nodes. An invalid listener index is passed through and never
 aliases stream zero.
 
+`CONFIG_ZMK_INPUT_MATRIX_MAX_SOURCES` defaults to `0`: every Matrix node
+reserves one independent stream per enabled input listener, with at least one
+slot. A positive value from `1` to `256` explicitly reserves global
+`input_device_index` slots `0` through `value - 1`; it never compacts sparse IDs.
+For a keyboard whose Matrix routes use only listener IDs `0` and `1`, setting
+`CONFIG_ZMK_INPUT_MATRIX_MAX_SOURCES=2` avoids streams for unrelated listeners.
+Audit every base/child route and direct processor caller before selecting a
+bound. A compile-time guard matches ZMK's enabled-device gate and all child
+routes, including disabled child nodes, and rejects any Matrix reference at an
+excluded listener index. NULL state still uses slot zero; invalid runtime
+indices pass through unchanged. Re-audit IDs after changing the listener graph.
+Each excluded slot removes one full contact, claim and delayed-work stream per
+Matrix node; its size depends on the selected Zephyr ABI. Claims, ordered edge
+capacity, hold range, reset/cancel behavior and gesture modes remain unchanged.
+
 The delayed long-press handler performs only bounded in-memory state changes
 and KSCAN reporting: it does not sleep, allocate, scan settings, or write
 flash. Contact generations and pending-release bookkeeping reconcile a release

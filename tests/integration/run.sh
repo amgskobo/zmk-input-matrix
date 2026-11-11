@@ -63,13 +63,14 @@ fi
 
 source /src/tests/integration/workspace-env.sh
 zmk_test_select_workspace "$workspace"
+python3 /src/tests/integration/source-limits.py "$workspace" --output "$work_dir/source-limits"
 
 cmake_args=()
 if [ "$variant" = dya ]; then
     cmake_args+=("-DEXTRA_CONF_FILE=/src/tests/integration/custom-settings.conf")
 fi
 
-west build -s "$workspace/zmk/app" -d "$work_dir/build" -b xiao_ble/nrf52840/zmk -- \
+west build -o="-j$ZMK_TEST_BUILD_JOBS" -s "$workspace/zmk/app" -d "$work_dir/build" -b xiao_ble/nrf52840/zmk -- \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DZMK_EXTRA_MODULES="/src;/src/tests/integration/firmware;$companion" \
     -DSHIELD=matrix_test \
@@ -112,3 +113,4 @@ fi
 ZMK_TEST_CORE="$variant" python3 /src/tests/deep-scan/run.py "$workspace" \
     "$work_dir/ownership" \
     --core-revision "$(git -C "$workspace/zmk" rev-parse HEAD)" "${producer_args[@]}"
+python3 /src/tests/source-limits/run.py "$workspace" "$work_dir/source-limits-native"

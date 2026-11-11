@@ -3,6 +3,10 @@
 # Keep the selected manifest authoritative when Zephyr itself is a cache symlink.
 zmk_test_select_workspace() {
     local workspace projects project
+    export ZMK_TEST_BUILD_JOBS="${ZMK_TEST_BUILD_JOBS:-2}"
+    if [[ ! "$ZMK_TEST_BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+        echo 'ZMK_TEST_BUILD_JOBS must be a positive integer' >&2; return 2
+    fi
     workspace="$(cd "${1:?resolved workspace required}" && pwd)" || return 2
     if [ "${ZMK_TEST_WORKSPACE_NEGATIVE_CONTROL:-}" = keep-ambient ]; then return 0; fi
     if ! projects="$(cd "$workspace" && west list -f '{abspath}')"; then

@@ -24,6 +24,7 @@ ZMK_TEST_REQUIRE_IQS=1 bash /src/tests/integration/run.sh upstream
 | Real kernel | kernel/module/main.c: nine actual work/layer/settings hold-cancellation/replacement groups plus DYA registry isolation with ordered KSCAN edges/timestamps; one binary3/core |
 | Complete composition | deep-scan/run.py:46 Matrix+17 actual IQS producer cases and five strict cases; real input/listener/keymap/HID, three same-binary runs/core; details in deep-scan/README.md |
 | Infrastructure | test_runtime_coverage.py and integration/test_*.py: complete measurement, pinned/clean/safe offline inputs, fresh output, readonly Docker handoff, required IQS/companion failure and child-exit propagation |
+| Source allocation | test_source_limits.py: complete driver at automatic2/5, limited1/2/256 and no-listener fallback; ASan/UBSan, full optimized/m32; integration/source-limits.py:42 actual generated-DTS controls, including sparse IDs, every route and invalid bounds; source-limits/run.py:actual listener IDs0/1 and3/4 with real holds/settings/release, three same-binary repeats/core |
 
 Quick runs every host scenario under ASan/UBSan. Full adds optimized/coverage
 and retained ABI variants. Real function ranges require executable lines and
@@ -142,3 +143,72 @@ boundaries; physical HID/split/sensor timing and power remain unmeasured.
 ```sh
 python3 -m unittest discover -s tests -p test_timeout_width.py -v
 ```
+
+## Optional source allocation
+
+The automatic default (`CONFIG_ZMK_INPUT_MATRIX_MAX_SOURCES=0`) remains one
+stream per enabled listener, with at least one. A positive bound reserves
+original global IDs0..bound-1; sparse use never becomes a dense index. The guard
+matches the core's enabled source-device gate, the listener base route and all
+children, including disabled children compiled by `DT_INST_FOREACH_CHILD`.
+Runtime NULL/invalid behavior and all gesture/claim/reset/cancel/settings
+assertions remain. Host allocation tests run the complete driver for each
+allocation with two or more slots; one-slot/fallback cases retain explicit
+NULL, highest, invalid and settings reset probes. The256-slot case retains all
+uint8 IDs and therefore has no impossible out-of-range runtime comparison.
+
+Both canonical integration variants run the42 generated-DTS controls and three
+native profiles: automatic five listeners with pads0/1; bound2 with those same
+listeners; automatic five with actual pads3/4. Each binary executes three times.
+A fourth native build must reject the higher IDs under bound2 with the named
+source-limit diagnostic. No existing Matrix/IQS/strict/negative case is replaced.
+The generated-DTS runner's `--negative-control skip-routes|skip-children` must
+fail for its named missing sparse-reference rejection; these are test controls,
+separate from positive product results.
+
+For the complete limited profile after a successful canonical integration run:
+
+```sh
+python3 tests/source-limits/complete.py upstream COMPLETED_INTEGRATION /fresh/limited
+python3 tests/deep-scan/post.py upstream COMPLETED_INTEGRATION/workspace \
+    COMPLETED_INTEGRATION/ownership /fresh/strict-and-controls
+```
+
+Repeat with `dya` and its completed integration. Keep the explicit final-filter
+and IQS provider environment selections. The first entry runs all63 cases and
+five strict cases at bound2, reusing one binary; it runs every original kernel
+group at bound2 and separately classifies a whole-kernel ASan/UBSan configuration.
+The second reuses the original full binary for five strict cases and dispatches
+the three genuine defect controls through the existing owner entry. Every case
+has three same-binary repeats. A named unchanged-core sanitizer fault is BLOCKED,
+not an owner PASS; unclassified failures reject the entry.
+
+The original Matrix fixture leaves the native board's independent mock KSCAN
+unchosen and unconfigured. Its sanitizer PASS does not exercise that decoder.
+`python3 tests/kernel/mock-boundary.py upstream|dya COMPLETED_INTEGRATION
+/fresh/mock` explicitly configures/enables the unchanged mock with an immediate
+nonempty event, alongside all original kernel groups under ASan/UBSan. It requires
+both completion markers for PASS and retains a named unchanged-core signed-shift
+failure as BLOCKED. It does not patch the core, empty the event list or disable
+sanitizers. Repeat every binary3/core. Physical KSCAN/electrical acceptance is
+still separate.
+
+Set `ZMK_TEST_BUILD_JOBS=1` to keep every firmware/native compile within a
+one-worker budget; the default remains2. The selected workspace helper rejects
+invalid worker counts before project discovery. Runtime packages/toolchains and
+all builds stay inside Docker. Allocation sizes, compiler frames and actual
+installed stack high-water are different observations. Production still needs
+the complete consuming role builds and physical HID/split/power acceptance.
+
+## Atomic generation wrap
+
+`test_generation_wrap.py` drives the actual setter and layer-reset functions at
+LONG_MAX→LONG_MIN and -1→0. It checks the release of an active hold, every stream's
+applied generation and a replacement contact's complete hold pair. The atomic
+stub models Zephyr's defined atomic wrap; the driver computes its own next token
+with width-matched unsigned arithmetic, without an extra atomic read. Quick runs
+both paths3/binary with ASan/UBSan. Full adds O2 and 32-bit UBSan, preserving all
+other driver cases. The original signed expressions produce a qualified UBSan
+overflow at both word widths3/path; optimized apparent success is not UB safety.
+`ZMK_TEST_GENERATION_OUTPUT` optionally retains rendered source, commands, binary
+hashes and raw repeats at a fresh absolute evidence directory.

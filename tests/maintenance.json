@@ -19,7 +19,10 @@
     "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --strict-clicks; five additional strict/robustness checks; current direct-mask composition requires PASS",
     "python3 tests/deep-scan/run.py WORKSPACE FRESH_OUTPUT --iqs-root RESOLVED_IQS --iqs-only --negative-control iqs-drop-release; omit OFF delivery and require final held-button failure3/3",
     "CI firmware entry: ZMK_TEST_REQUIRE_IQS=1 ZMK_TEST_IQS_ROOT=PINNED_IQS ZMK_TEST_OUTPUT=FRESH_OUTPUT bash tests/run-integration-docker.sh upstream|dya; all63 cases required, fresh retained evidence. See tests/README.md.",
-    "python3 -m unittest discover -s tests -p test_timeout_width.py -v; included in canonical host quick/full"
+    "python3 -m unittest discover -s tests -p test_timeout_width.py -v; included in canonical host quick/full",
+    "python3 tests/source-limits/complete.py upstream|dya COMPLETED_INTEGRATION FRESH_OUTPUT; full63+strict5+kernel bound2, same-binary3",
+    "python3 tests/deep-scan/post.py upstream|dya RESOLVED_WORKSPACE COMPLETED_OWNERSHIP FRESH_OUTPUT; original-binary strict5 + all3 genuine controls",
+    "python3 tests/kernel/mock-boundary.py upstream|dya COMPLETED_INTEGRATION FRESH_OUTPUT; actual nonempty mock decoder plus existing kernel groups under ASan/UBSan, named upstream failures BLOCKED"
   ],
   "coverage_map": "tests/contract.json",
   "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
@@ -43,6 +46,19 @@
     "contract": "Normalized geometry uses bounded uint32 products. Squared travel keeps one explicit carry bit alongside its uint32 low word, retaining exact farthest-point ordering up to the maximum supported coordinates. Hold deadlines use modulo uint32 uptime and explicit armed state, including deadline zero after wrap. Pending deadlines assume elapsed observations below 2^31 ms.",
     "fixtures": "runtime/geometry_harness.c retains exact large squared-distance and direction/tie assertions using a test-only wide reference. runtime/driver_harness.c adds carry ordering and wrapped/zero/unarmed hold deadlines. Existing generated-key, reset and settings/race assertions remain.",
     "physical": "NOT RUN"
+  },
+  "generation_wrap": {
+    "fixture": "tests/test_generation_wrap.py; tests/runtime/generation_wrap_harness.c",
+    "contract": "Keep each atomic increment's own next-generation token; unsigned-long modular addition avoids signed UB at LONG_MAX while preserving sign/full wrap, reset/cancel, hold release and replacement contact behavior.",
+    "checks": "Quick: setter/layer paths3 per ASan/UBSan binary; full adds O2 and m32 UBSan. Both sign/full boundaries, applied generations, active hold release and replacement pair. Original signed expressions trigger qualified UBSan failures3/path at both word widths; optional fresh ZMK_TEST_GENERATION_OUTPUT retains binaries/source/commands/raw repeats."
+  },
+  "source_allocation": {
+    "contract": "MAX_SOURCES0 keeps automatic enabled-listener count/minimum1; positive1..256 preserves global IDs, NULL0 and invalid passthrough. Enabled-device base+all-child guards reject excluded Matrix references without remapping. Claims16/edge32 defaults and all gesture/settings/reset/cancel behavior remain.",
+    "host": "test_source_limits.py: complete driver for auto2/5 and limit2/256; single-slot and no-listener fallback probes; ASan/UBSan plus full O2/m32",
+    "generated_dts": "integration/source-limits.py:42 generated-DTS cases; sparse source2, base/child/disabled-child/device/listener, bounds0/1/2/3/256/-1/257; skip-routes and skip-children named missing-rejection controls",
+    "native": "source-limits/run.py:actual listener callback IDs0/1 under auto5/limit2 and IDs3/4 under auto5, each binary3; bound2/high3/4 named compile rejection, both supported cores",
+    "complete": "source-limits/complete.py reuses canonical selections for all63+strict5 cases at bound2 and every kernel group; separate strict whole-kernel sanitizer status. deep-scan/post.py reuses the original binary for strict5 and dispatches all3 genuine defect controls. Both reject changed compiled inputs, IQS producer/revision/working bytes and selected core/Zephyr; all scenario/selector/validator code remains in this owner's tests.",
+    "limits": "Static allocation and compiler frames do not establish hardware stack high-water, physical latency/HID/split delivery or power. Complete production roles remain a consumer gate."
   },
   "timeout_conversion": {
     "contract": "Single variable hold-work timeout; full uint16 range, exact ceiling, configured tick ABI, zero-disable and all contact/deadline/generation/output policy retained",

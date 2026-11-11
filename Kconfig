@@ -14,6 +14,20 @@ config ZMK_INPUT_PROCESSOR_MATRIX
       This processor converts absolute trackpad coordinates into virtual key
       events based on gestures (Tap, Flick Up/Down/Left/Right).
 
+config ZMK_INPUT_MATRIX_MAX_SOURCES
+    int "Matrix source-index allocation bound (0 = automatic)"
+    depends on ZMK_INPUT_PROCESSOR_MATRIX
+    range 0 256
+    default 0
+    help
+      Zero reserves one independent contact and delayed-work stream per enabled
+      ZMK input listener, with at least one slot. A positive value reserves
+      global input_device_index slots 0 through value-1 per Matrix node.
+      Indices are not compacted or remapped. Set this only after auditing every
+      listener route and direct processor caller; a build-time guard rejects
+      enabled listener routes referencing Matrix at an excluded index.
+      Invalid runtime indices pass through unchanged; NULL state uses slot 0.
+
 config ZMK_KSCAN_INPUT_MATRIX
     bool "KSCAN Input Matrix Proxy"
     default $(dt_compat_enabled,$(DT_COMPAT_ZMK_KSCAN_INPUT_MATRIX))

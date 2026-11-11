@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+config MATRIX_SOURCE_TEST_LEFT
+    int "Expected actual left listener index"
+    default 0
+config MATRIX_SOURCE_TEST_RIGHT
+    int "Expected actual right listener index"
+    default 1

@@ -1,0 +1,4 @@
+name: matrix_source_limits_fixture
+build:
+  cmake: .
+  kconfig: Kconfig

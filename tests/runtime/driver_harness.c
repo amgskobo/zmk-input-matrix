@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -47,7 +48,21 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 #define ZMK_INPUT_PROC_STOP 1
 
 #define COORD_UNINITIALIZED UINT16_MAX
-#define ZIP_MATRIX_STREAM_COUNT 2
+#ifndef TEST_LISTENER_COUNT
+#define TEST_LISTENER_COUNT 2
+#endif
+#define DT_NUM_INST_STATUS_OKAY(compat) TEST_LISTENER_COUNT
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define BUILD_ASSERT(condition, message) _Static_assert(condition, message)
+/* Runtime fixtures exercise allocation and mapping; generated-DTS controls
+ * separately exercise every actual production route guard. */
+#define DT_COMPAT_FOREACH_STATUS_OKAY_VARGS(...)
+#include "matrix_sources.h"
+#ifdef MATRIX_TEST_IGNORE_ALLOCATION
+/* Named test defect: ignore a positive allocation and retain the auto count. */
+#undef ZIP_MATRIX_STREAM_COUNT
+#define ZIP_MATRIX_STREAM_COUNT MAX(TEST_LISTENER_COUNT, 1)
+#endif
 #define ZIP_MATRIX_USE_DIAMOND_TAP 1
 #define ZMK_EV_EVENT_BUBBLE 0
 #define DT_INST_FOREACH_STATUS_OKAY(fn) fn(0)
@@ -76,12 +91,18 @@ static int writer_lands_on_read;
 
 static atomic_val_t atomic_get(const atomic_t *value) {
     if (writer_lands_on_read > 0 && --writer_lands_on_read == 0) {
-        (*(atomic_t *)value)++;
+        *(atomic_t *)value = (atomic_t)((unsigned long)*value + 1UL);
     }
     return *value;
 }
 static void atomic_set(atomic_t *value, atomic_val_t next) { *value = next; }
-static atomic_val_t atomic_inc(atomic_t *value) { return (*value)++; }
+/* Zephyr's atomic increment wraps in the atomic operation. Model that without
+ * introducing signed-overflow UB in the stub itself. */
+static atomic_val_t atomic_inc(atomic_t *value) {
+    atomic_val_t before = *value;
+    *value = (atomic_t)((unsigned long)before + 1UL);
+    return before;
+}
 static void (*before_stream_lock)(void);
 static int lock_countdown;
 static int64_t now_ms;
@@ -592,9 +613,11 @@ static void test_source_buttons_transparent(void) {
 }
 
 static void test_streams_and_generations(void) {
+#if ZIP_MATRIX_STREAM_COUNT < 256
     /* Past the listeners: untouched. */
     struct zmk_input_processor_state stranger = {.input_device_index = ZIP_MATRIX_STREAM_COUNT};
     assert(send_to(&stranger, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false) == ZMK_INPUT_PROC_CONTINUE);
+#endif
 
     /* A second listener keeps its own contact. */
     send_to(&second, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
@@ -925,6 +948,9 @@ static void test_wide_travel_and_clock_wrap(void) {
     lift();
 }
 
+#ifdef MATRIX_SOURCE_ALLOCATION_TEST
+static __attribute__((unused))
+#endif
 int main(void) {
     config = (struct zip_matrix_config){.rows = 3, .columns = 3, .x = 900, .y = 900,
                                         .flick_threshold = 100, .long_press_ms = 300,

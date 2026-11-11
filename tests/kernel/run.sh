@@ -21,7 +21,7 @@ cmake_args=()
 if [ "${ZMK_TEST_CUSTOM_SETTINGS:-0}" = 1 ]; then
   cmake_args+=("-DEXTRA_CONF_FILE=$repo/tests/integration/custom-settings.conf")
 fi
-west build -p=always -o=-j2 -s "$workspace/zmk/app" -d "$output" \
+west build -p=always -o="-j$ZMK_TEST_BUILD_JOBS" -s "$workspace/zmk/app" -d "$output" \
   -b native_sim//zmk_test_mock -- -DZMK_CONFIG="$repo/tests/kernel/config" \
   -DZMK_EXTRA_MODULES="$repo;$repo/tests/kernel/module;$companion" "${cmake_args[@]}" >"$output.build.log" 2>&1
 for run in 1 2 3; do

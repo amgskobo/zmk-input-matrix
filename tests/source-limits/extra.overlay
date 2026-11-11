@@ -1,0 +1,4 @@
+/* SPDX-License-Identifier: MIT */
+/* The two pads and the core's three unrelated mouse-key listeners give five
+ * actual global IDs already. Keep that graph unchanged for the low-ID lane. */
+/ {};

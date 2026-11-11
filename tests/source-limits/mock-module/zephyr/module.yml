@@ -1,0 +1,3 @@
+name: matrix-live-mock-boundary
+build:
+  cmake: .
